@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Comment Extractor</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .loader { border-top-color: #3498db; animation: spinner 1.5s linear infinite; }
+        @keyframes spinner { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .thumbnail { width: 80px; height: 80px; object-fit: cover; border-radius: 8px; }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800 p-4">
+    <div class="card w-full max-w-3xl mx-auto p-8 bg-white rounded-2xl shadow-xl">
+        <h1 class="text-3xl font-bold text-center mb-2">AI Comment Extractor</h1>
+        <p class="text-center text-gray-500 mb-8">Upload screenshots. We handle the AI.</p>
+
+        <div id="dropZone" class="border-2 border-dashed border-gray-300 p-8 text-center rounded-xl cursor-pointer hover:bg-gray-50">
+            <input type="file" id="imageUpload" class="hidden" accept="image/*" multiple>
+            <p class="text-gray-500">Click or Drag Screenshots Here</p>
+        </div>
+        <div id="gallery" class="flex flex-wrap gap-2 mt-4 justify-center"></div>
+        
+        <button id="extractBtn" class="bg-indigo-600 text-white w-full py-3 rounded-lg mt-6 font-bold disabled:opacity-50 flex justify-center items-center gap-2" disabled>
+            <span>Extract Comments</span>
+            <div id="loader" class="loader w-5 h-5 rounded-full border-2 hidden"></div>
+        </button>
+
+        <div id="resultsArea" class="hidden mt-8">
+            <div id="sov" class="mb-4 p-4 bg-gray-50 rounded-lg hidden"></div>
+            <div id="tableContainer" class="max-h-96 overflow-y-auto border rounded-lg"></div>
+            <div class="flex gap-2 mt-4">
+                <button id="sentimentBtn" class="bg-purple-600 text-white px-4 py-2 rounded flex-1">Analyze Sentiment</button>
+                <button id="downloadBtn" class="bg-green-600 text-white px-4 py-2 rounded flex-1">Download CSV</button>
+            </div>
+        </div>
+        
+        <p id="errorMsg" class="text-red-500 text-center mt-4 hidden"></p>
+    </div>
+
+    <script>
+        let files = [], extractedData = [];
+        const dropZone = document.getElementById('dropZone');
+        const extractBtn = document.getElementById('extractBtn');
+        
+        dropZone.onclick = () => document.getElementById('imageUpload').click();
+        document.getElementById('imageUpload').onchange = (e) => handleFiles(e.target.files);
+
+        function handleFiles(fileList) {
+            for (const file of fileList) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    files.push({ file, base64: e.target.result.split(',')[1] });
+                    renderGallery();
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+
+        function renderGallery() {
+            const gallery = document.getElementById('gallery');
+            gallery.innerHTML = '';
+            files.forEach(f => {
+                const img = document.createElement('img');
+                img.src = URL.createObjectURL(f.file);
+                img.className = 'thumbnail border';
+                gallery.appendChild(img);
+            });
+            extractBtn.disabled = files.length === 0;
+        }
+
+        async function serverCall(type, payload) {
+            // WE CALL OUR OWN INTERNAL SERVER, NOT GOOGLE DIRECTLY
+            const response = await fetch('/api/process', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ type, payload })
+            });
+            if (!response.ok) throw new Error(await response.text());
+            return await response.json();
+        }
+
+        extractBtn.onclick = async () => {
+            setLoading(true);
+            try {
+                extractedData = [];
+                for (const f of files) {
+                    const data = await serverCall('extraction', f.base64);
+                    if(data.comments) extractedData.push(...data.comments);
+                }
+                renderTable();
+                document.getElementById('resultsArea').classList.remove('hidden');
+            } catch (e) {
+                showError(e.message);
+            } finally { setLoading(false); }
+        };
+
+        document.getElementById('sentimentBtn').onclick = async () => {
+            const btn = document.getElementById('sentimentBtn');
+            btn.textContent = "Analyzing...";
+            btn.disabled = true;
+            try {
+                const texts = extractedData.map(c => c.text);
+                const data = await serverCall('sentiment', texts);
+                extractedData.forEach((c, i) => c.sentiment = data.sentiments[i] || 'Neutral');
+                renderTable();
+                renderSov(data.sov);
+                btn.classList.add('hidden');
+            } catch (e) { showError(e.message); }
+        };
+
+        function renderTable() {
+            const container = document.getElementById('tableContainer');
+            let html = '<table class="w-full text-sm text-left"><thead class="bg-gray-50 sticky top-0"><tr><th class="p-2">Author</th><th class="p-2">Comment</th><th class="p-2">Sent.</th></tr></thead><tbody>';
+            extractedData.forEach(c => {
+                const color = c.sentiment === 'Positive' ? 'text-green-600' : c.sentiment === 'Negative' ? 'text-red-600' : 'text-gray-500';
+                html += `<tr class="border-b"><td class="p-2 font-bold">${c.author}</td><td class="p-2">${c.text}</td><td class="p-2 ${color}">${c.sentiment || '-'}</td></tr>`;
+            });
+            container.innerHTML = html + '</tbody></table>';
+        }
+
+        function renderSov(sov) {
+            const div = document.getElementById('sov');
+            div.classList.remove('hidden');
+            div.innerHTML = `<h3 class="font-bold text-center">Sentiment: Positive ${sov.Positive}% | Negative ${sov.Negative}% | Neutral ${sov.Neutral}%</h3>`;
+        }
+
+        document.getElementById('downloadBtn').onclick = () => {
+            const csv = "Author,Comment,Likes,Date,Sentiment\n" + extractedData.map(c => `"${c.author}","${c.text.replace(/"/g, '""')}",${c.likes},"${c.timestamp}",${c.sentiment||''}`).join("\n");
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(new Blob([csv], {type: 'text/csv'}));
+            link.download = 'comments.csv';
+            link.click();
+        };
+
+        function setLoading(b) { 
+            extractBtn.disabled = b; 
+            document.getElementById('loader').classList.toggle('hidden', !b); 
+        }
+        function showError(msg) {
+            const el = document.getElementById('errorMsg');
+            el.textContent = msg;
+            el.classList.remove('hidden');
+        }
+    </script>
+</body>
+</html>
