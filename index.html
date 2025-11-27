@@ -89,13 +89,12 @@
                 for (const f of files) {
                     const data = await serverCall('extraction', f.base64);
                     if(data.comments) {
-                        // Process dates immediately upon receipt
-                        const processedComments = data.comments.map(c => ({
+                        // Normalize the data immediately
+                        const processed = data.comments.map(c => ({
                             ...c,
-                            // Convert "2h ago" to actual date string
                             timestamp: parseRelativeTime(c.timestamp, new Date())
                         }));
-                        extractedData.push(...processedComments);
+                        extractedData.push(...processed);
                     }
                 }
                 renderTable();
@@ -135,20 +134,23 @@
             div.innerHTML = `<h3 class="font-bold text-center">Sentiment: Positive ${sov.Positive}% | Negative ${sov.Negative}% | Neutral ${sov.Neutral}%</h3>`;
         }
 
+        // --- UPDATED EXPORT LOGIC WITH UUID ---
         document.getElementById('downloadBtn').onclick = () => {
-            // CSV Header
-            let csv = "Author,Comment,Likes,Date,Sentiment\n";
+            // 1. Add "Content ID" to Header
+            let csv = "Content ID,Author,Comment,Likes,Date,Sentiment\n";
             
-            // CSV Rows
             csv += extractedData.map(c => {
-                // Escape quotes for CSV
+                // 2. Generate Random UUID for each row
+                const uuid = crypto.randomUUID();
+
                 const text = c.text ? c.text.replace(/"/g, '""') : "";
                 const auth = c.author ? c.author.replace(/"/g, '""') : "";
-                const time = c.timestamp; // Already formatted by extractBtn logic
+                const time = c.timestamp; 
                 const likes = c.likes || 0;
                 const sent = c.sentiment || "";
                 
-                return `"${auth}","${text}",${likes},"${time}",${sent}`;
+                // 3. Add UUID as first column
+                return `"${uuid}","${auth}","${text}",${likes},"${time}",${sent}`;
             }).join("\n");
 
             const link = document.createElement('a');
@@ -167,7 +169,6 @@
             el.classList.remove('hidden');
         }
 
-        // --- DATE PARSING LOGIC ---
         function parseRelativeTime(relativeString, referenceDate) {
             if (!relativeString) return "N/A";
             const now = new Date(referenceDate);
@@ -206,7 +207,6 @@
             }
             
             if (!matched) {
-                // Try parsing absolute date if relative logic failed
                 const parsedDate = new Date(str);
                 if (!isNaN(parsedDate.getTime())) {
                     if (!/(\d{4})/.test(str)) {
@@ -215,11 +215,10 @@
                     }
                     date = parsedDate;
                 } else {
-                    return relativeString; // Return original text if we can't figure it out
+                    return relativeString; 
                 }
             }
 
-            // FORCE FORMAT: DD/MM/YYYY, HH:MM:SS
             const day = String(date.getDate()).padStart(2, '0');
             const month = String(date.getMonth() + 1).padStart(2, '0');
             const year = date.getFullYear();
