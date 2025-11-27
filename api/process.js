@@ -3,30 +3,41 @@ export default async function handler(req, res) {
         return res.status(405).json({ error: 'Method Not Allowed' });
     }
 
-    // Vercel automatically loads this from the "Environment Variables" you set in the dashboard
     const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-    
     if (!GEMINI_API_KEY) {
-        return res.status(500).json({ error: 'Server Misconfiguration: No API Key found in Vercel Settings.' });
+        return res.status(500).json({ error: 'Server Misconfiguration: No API Key found.' });
     }
 
     try {
         const { type, payload } = req.body;
         
-        // *** FIX: Updated to the current 2025 standard model ***
-        const model = "gemini-2.5-flash"; 
+        // Using standard Flash model
+        const model = "gemini-1.5-flash"; 
         const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
 
         let promptText = "";
         let contents = [];
 
+        // --- 1. IMAGE EXTRACTION ---
         if (type === 'extraction') {
-            promptText = `Analyze this screenshot of a comment section. Extract: 1. Author name 2. Comment text (exact transcription) 3. Relative timestamp (e.g., "2h", "5d"). 4. Like count (number only, convert "1.2k" to 1200). If hidden/missing, use 0. Return JSON only: { "comments": [{ "author": "...", "text": "...", "timestamp": "...", "likes": 0 }] }`;
+            promptText = `Analyze this screenshot of a comment section. Extract: 1. Author name 2. Comment text (exact transcription) 3. Relative timestamp (e.g., "2h", "5d"). 4. Like count (number only). Return JSON only: { "comments": [{ "author": "...", "text": "...", "timestamp": "...", "likes": 0 }] }`;
             contents = [{ parts: [{ text: promptText }, { inlineData: { mimeType: "image/png", data: payload } }] }];
+        
+        // --- 2. SENTIMENT ANALYSIS ---
         } else if (type === 'sentiment') {
-            const commentTexts = payload;
-            promptText = `Analyze the sentiment of these comments. 1. Classify each as 'Positive', 'Negative', or 'Neutral'. 2. Calculate Share of Voice (SOV). Input: ${JSON.stringify(commentTexts)}. Return JSON only: { "sentiments": ["Positive", "Neutral", ...], "sov": { "Positive": 50, "Negative": 20, "Neutral": 30 } }`;
+            promptText = `Analyze sentiment. Classify each as 'Positive', 'Negative', or 'Neutral'. Calculate Share of Voice (SOV). Input: ${JSON.stringify(payload)}. Return JSON only: { "sentiments": ["Positive", ...], "sov": { "Positive": 50, "Negative": 20, "Neutral": 30 } }`;
             contents = [{ parts: [{ text: promptText }] }];
+
+        // --- 3. NEW: SUMMARIZATION ---
+        } else if (type === 'summary') {
+            promptText = `Analyze these comments and provide a high-level summary. 
+            1. Identify the main topic of discussion.
+            2. Summarize the general consensus or debate.
+            3. List 3 key recurring themes or complaints.
+            Input: ${JSON.stringify(payload)}. 
+            Return JSON only: { "summary": "## Executive Summary\\n\\n[Write a professional summary here]\\n\\n### Key Themes\\n* [Theme 1]\\n* [Theme 2]\\n* [Theme 3]" }`;
+            contents = [{ parts: [{ text: promptText }] }];
+        
         } else {
             return res.status(400).json({ error: 'Invalid Type' });
         }
@@ -42,7 +53,6 @@ export default async function handler(req, res) {
 
         if (!googleResponse.ok) {
             const errorText = await googleResponse.text();
-            // Pass the exact error from Google back to the user for debugging
             throw new Error(`Gemini API Error: ${errorText}`);
         }
 
