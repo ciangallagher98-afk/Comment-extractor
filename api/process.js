@@ -1,4 +1,5 @@
 export default async function handler(req, res) {
+    // 1. Basic Setup
     if (req.method !== 'POST') {
         return res.status(405).json({ error: 'Method Not Allowed' });
     }
@@ -8,84 +9,83 @@ export default async function handler(req, res) {
         return res.status(500).json({ error: 'Server Misconfiguration: No API Key found.' });
     }
 
-    // LIST OF SAFE MODELS TO TRY (In order of preference)
-    // We strictly avoid "experimental" or "learnlm" models to prevent 404s.
-    const MODEL_CANDIDATES = [
-        "gemini-1.5-flash",
-        "gemini-1.5-flash-002",
-        "gemini-1.5-flash-001",
-        "gemini-1.5-pro"
+    // 2. THE FIX: The Priority List
+    // We try the newest experimental model first (likely what your key needs),
+    // then fall back to the standard ones.
+    const MODEL_PRIORITY = [
+        "gemini-2.0-flash-exp", // The newest model (Fixes the "learnlm" issue)
+        "gemini-1.5-flash",     // Standard fallback
+        "gemini-1.5-flash-8b",  // Lightweight fallback
+        "gemini-1.5-pro"        // Heavy fallback
     ];
 
     try {
         const { type, payload } = req.body;
+        let successfulData = null;
         let lastError = null;
 
-        // --- LOOP THROUGH MODELS UNTIL ONE WORKS ---
-        for (const model of MODEL_CANDIDATES) {
+        // 3. The Loop: Try models until one works
+        for (const model of MODEL_PRIORITY) {
             try {
-                console.log(`Attempting model: ${model}`); // Logs to Vercel console
-                const result = await callGoogle(model, type, payload, GEMINI_API_KEY);
+                console.log(`Trying model: ${model}...`);
                 
-                // If we get here, it worked! Return the data and exit the function.
-                return res.status(200).json(result);
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
+                let promptText = "";
+                let contents = [];
+
+                // Construct Prompt
+                if (type === 'extraction') {
+                    promptText = `Analyze this screenshot of a comment section. Extract: 1. Author name 2. Comment text (exact transcription) 3. Relative timestamp (e.g., "2h", "5d"). 4. Like count (number only). Return JSON only: { "comments": [{ "author": "...", "text": "...", "timestamp": "...", "likes": 0 }] }`;
+                    contents = [{ parts: [{ text: promptText }, { inlineData: { mimeType: "image/png", data: payload } }] }];
+                } else if (type === 'sentiment') {
+                    promptText = `Analyze sentiment. Classify as 'Positive', 'Negative', or 'Neutral'. Calculate Share of Voice (SOV). Input: ${JSON.stringify(payload)}. Return JSON only: { "sentiments": ["Positive", ...], "sov": { "Positive": 50, "Negative": 20, "Neutral": 30 } }`;
+                    contents = [{ parts: [{ text: promptText }] }];
+                } else if (type === 'summary') {
+                    promptText = `Summarize these comments. Input: ${JSON.stringify(payload)}. Return JSON only: { "summary": "## Executive Summary\\n\\n..." }`;
+                    contents = [{ parts: [{ text: promptText }] }];
+                } else {
+                    return res.status(400).json({ error: 'Invalid Type' });
+                }
+
+                // Call Google
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: contents,
+                        generationConfig: { responseMimeType: "application/json" }
+                    })
+                });
+
+                if (!response.ok) {
+                    const txt = await response.text();
+                    throw new Error(`${response.status}: ${txt}`);
+                }
+
+                const data = await response.json();
+                
+                // If we got here, it worked!
+                const jsonText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+                if (!jsonText) throw new Error("Empty response");
+                
+                successfulData = JSON.parse(jsonText);
+                break; // EXIT THE LOOP
 
             } catch (error) {
-                console.warn(`Model ${model} failed:`, error.message);
+                console.warn(`Model ${model} failed: ${error.message}`);
                 lastError = error;
-                // If it's a 404 or 400 (Bad Request), we try the next model.
-                // If it's a 429 (Quota Limit), we theoretically should stop, but keeping it simple.
-                continue; 
+                // Continue to the next model in the list
             }
         }
 
-        // If we ran out of models and none worked:
-        throw new Error(`All models failed. Last error: ${lastError.message}`);
+        if (successfulData) {
+            return res.status(200).json(successfulData);
+        } else {
+            throw new Error(`All models failed. Last error: ${lastError.message}`);
+        }
 
     } catch (globalError) {
-        console.error("Backend Fatal Error:", globalError);
+        console.error("Fatal Error:", globalError);
         res.status(500).json({ error: globalError.message });
     }
-}
-
-// Helper function to perform the actual fetch
-async function callGoogle(model, type, payload, apiKey) {
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-    let promptText = "";
-    let contents = [];
-
-    if (type === 'extraction') {
-        promptText = `Analyze this screenshot of a comment section. Extract: 1. Author name 2. Comment text (exact transcription) 3. Relative timestamp (e.g., "2h", "5d"). 4. Like count (number only). Return JSON only: { "comments": [{ "author": "...", "text": "...", "timestamp": "...", "likes": 0 }] }`;
-        contents = [{ parts: [{ text: promptText }, { inlineData: { mimeType: "image/png", data: payload } }] }];
-    } else if (type === 'sentiment') {
-        promptText = `Analyze sentiment. Classify each as 'Positive', 'Negative', or 'Neutral'. Calculate Share of Voice (SOV). Input: ${JSON.stringify(payload)}. Return JSON only: { "sentiments": ["Positive", ...], "sov": { "Positive": 50, "Negative": 20, "Neutral": 30 } }`;
-        contents = [{ parts: [{ text: promptText }] }];
-    } else if (type === 'summary') {
-        promptText = `Analyze these comments and provide a high-level summary. Input: ${JSON.stringify(payload)}. Return JSON only: { "summary": "## Summary\\n\\n..." }`;
-        contents = [{ parts: [{ text: promptText }] }];
-    } else {
-        throw new Error('Invalid Request Type');
-    }
-
-    const response = await fetch(apiUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            contents: contents,
-            generationConfig: { responseMimeType: "application/json" }
-        })
-    });
-
-    if (!response.ok) {
-        // We throw here so the Loop catches it and tries the next model
-        const txt = await response.text();
-        throw new Error(`Google Error (${response.status}): ${txt}`);
-    }
-
-    const data = await response.json();
-    const jsonText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-    
-    if (!jsonText) throw new Error("Empty response from AI");
-    
-    return JSON.parse(jsonText);
 }
