@@ -3,284 +3,71 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Comment Extractor</title>
+    <title>AI Comment Scraper (2026 Stable)</title>
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <style>
-        body { font-family: 'Inter', sans-serif; }
-        .loader { border-top-color: #3498db; animation: spinner 1.5s linear infinite; }
-        @keyframes spinner { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        .thumbnail { width: 80px; height: 80px; object-fit: cover; border-radius: 8px; }
-        /* Markdown Styles */
-        .prose h2 { font-size: 1.25rem; font-weight: 700; margin-bottom: 0.5rem; color: #1f2937; }
-        .prose h3 { font-size: 1.1rem; font-weight: 600; margin-top: 1rem; margin-bottom: 0.5rem; color: #374151; }
-        .prose ul { list-style-type: disc; padding-left: 1.5rem; margin-bottom: 1rem; }
-        .prose p { margin-bottom: 0.75rem; line-height: 1.6; }
-    </style>
 </head>
-<body class="bg-gray-100 text-gray-800 p-4">
-    <div class="card w-full max-w-4xl mx-auto p-8 bg-white rounded-2xl shadow-xl">
-        <h1 class="text-3xl font-bold text-center mb-2">AI Comment Extractor</h1>
-        <p class="text-center text-gray-500 mb-8">Upload screenshots. We handle the AI.</p>
-
-        <div id="dropZone" class="border-2 border-dashed border-gray-300 p-8 text-center rounded-xl cursor-pointer hover:bg-gray-50">
-            <input type="file" id="imageUpload" class="hidden" accept="image/*" multiple>
-            <p class="text-gray-500">Click or Drag Screenshots Here</p>
-        </div>
-        <div id="gallery" class="flex flex-wrap gap-2 mt-4 justify-center"></div>
+<body class="bg-gray-100 min-h-screen p-8">
+    <div class="max-w-3xl mx-auto bg-white rounded-xl shadow-md p-6">
+        <h1 class="text-2xl font-bold mb-4">AI Comment Scraper</h1>
         
-        <button id="extractBtn" class="bg-indigo-600 text-white w-full py-3 rounded-lg mt-6 font-bold disabled:opacity-50 flex justify-center items-center gap-2 shadow-md hover:bg-indigo-700 transition" disabled>
-            <span>Extract Comments</span>
-            <div id="loader" class="loader w-5 h-5 rounded-full border-2 hidden"></div>
-        </button>
-
-        <div id="resultsArea" class="hidden mt-8">
-            
-            <div id="summaryBox" class="mb-6 p-6 bg-blue-50 border border-blue-100 rounded-xl hidden">
-                <div class="flex items-center gap-2 mb-2 text-blue-800 font-bold uppercase text-xs tracking-wider">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                    AI Summary
-                </div>
-                <div id="summaryContent" class="prose text-gray-700 text-sm"></div>
-            </div>
-
-            <div id="sov" class="mb-4 p-4 bg-gray-50 rounded-lg hidden"></div>
-            
-            <div id="tableContainer" class="max-h-96 overflow-y-auto border rounded-lg shadow-inner"></div>
-            
-            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-6">
-                <button id="summaryBtn" class="bg-blue-600 text-white px-4 py-3 rounded-lg font-medium hover:bg-blue-700 transition shadow">📝 Summarize Context</button>
-                <button id="sentimentBtn" class="bg-purple-600 text-white px-4 py-3 rounded-lg font-medium hover:bg-purple-700 transition shadow">❤️ Analyze Sentiment</button>
-                <button id="downloadBtn" class="bg-green-600 text-white px-4 py-3 rounded-lg font-medium hover:bg-green-700 transition shadow">📥 Download CSV</button>
-            </div>
+        <div class="mb-6">
+            <label class="block text-sm font-medium text-gray-700 mb-2">Upload Screenshot</label>
+            <input type="file" id="upload" accept="image/*" class="w-full border p-2 rounded">
         </div>
-        
-        <p id="errorMsg" class="text-red-500 text-center mt-4 hidden bg-red-50 p-2 rounded border border-red-200"></p>
+
+        <div class="flex gap-4 mb-6">
+            <button onclick="processImage()" id="btn-extract" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Extract Comments</button>
+        </div>
+
+        <div id="status" class="text-sm text-blue-600 mb-4 hidden">Processing image... (OCR)</div>
+        <div id="results" class="space-y-4"></div>
     </div>
 
     <script>
-        let files = [], extractedData = [];
-        const dropZone = document.getElementById('dropZone');
-        const extractBtn = document.getElementById('extractBtn');
-        
-        dropZone.onclick = () => document.getElementById('imageUpload').click();
-        document.getElementById('imageUpload').onchange = (e) => handleFiles(e.target.files);
+        async function processImage() {
+            const file = document.getElementById('upload').files[0];
+            const status = document.getElementById('status');
+            const results = document.getElementById('results');
+            const btn = document.getElementById('btn-extract');
 
-        function handleFiles(fileList) {
-            for (const file of fileList) {
-                const reader = new FileReader();
-                reader.onload = (e) => {
-                    files.push({ file, base64: e.target.result.split(',')[1] });
-                    renderGallery();
-                };
-                reader.readAsDataURL(file);
-            }
-        }
+            if (!file) return alert("Please upload an image");
 
-        function renderGallery() {
-            const gallery = document.getElementById('gallery');
-            gallery.innerHTML = '';
-            files.forEach(f => {
-                const img = document.createElement('img');
-                img.src = URL.createObjectURL(f.file);
-                img.className = 'thumbnail border';
-                gallery.appendChild(img);
-            });
-            extractBtn.disabled = files.length === 0;
-        }
-
-        async function serverCall(type, payload) {
-            const response = await fetch('/api/process', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ type, payload })
-            });
-            if (!response.ok) throw new Error(await response.text());
-            return await response.json();
-        }
-
-        // --- EXTRACT ---
-        extractBtn.onclick = async () => {
-            setLoading(true);
-            try {
-                extractedData = [];
-                for (const f of files) {
-                    const data = await serverCall('extraction', f.base64);
-                    if(data.comments) {
-                        const processed = data.comments.map(c => ({
-                            ...c,
-                            timestamp: parseRelativeTime(c.timestamp, new Date())
-                        }));
-                        extractedData.push(...processed);
-                    }
-                }
-                renderTable();
-                document.getElementById('resultsArea').classList.remove('hidden');
-                
-                // Reset other UI elements when re-extracting
-                document.getElementById('summaryBox').classList.add('hidden');
-                document.getElementById('sov').classList.add('hidden');
-                document.getElementById('sentimentBtn').disabled = false;
-                document.getElementById('summaryBtn').disabled = false;
-                document.getElementById('sentimentBtn').classList.remove('opacity-50');
-                document.getElementById('summaryBtn').classList.remove('opacity-50');
-
-            } catch (e) {
-                showError(e.message);
-            } finally { setLoading(false); }
-        };
-
-        // --- SUMMARIZE (New) ---
-        document.getElementById('summaryBtn').onclick = async () => {
-            const btn = document.getElementById('summaryBtn');
-            const originalText = btn.innerHTML;
-            btn.innerHTML = "Summarizing...";
+            status.classList.remove('hidden');
             btn.disabled = true;
-            btn.classList.add('opacity-75');
+            results.innerHTML = "";
 
             try {
-                const texts = extractedData.map(c => c.text);
-                const data = await serverCall('summary', texts);
-                
-                // Render Summary using Marked.js
-                const summaryDiv = document.getElementById('summaryBox');
-                const contentDiv = document.getElementById('summaryContent');
-                contentDiv.innerHTML = marked.parse(data.summary);
-                summaryDiv.classList.remove('hidden');
-                summaryDiv.classList.add('fade-in-up'); // Re-using existing CSS animation
+                // 1. Browser-side OCR
+                status.innerText = "Step 1/2: Reading text from image...";
+                const { data: { text } } = await Tesseract.recognize(file, 'eng');
 
-                btn.innerHTML = "Context Summarized";
-                btn.classList.add('bg-gray-400', 'cursor-not-allowed');
-                btn.classList.remove('bg-blue-600', 'hover:bg-blue-700');
-            } catch (e) {
-                showError(e.message);
-                btn.innerHTML = originalText;
+                // 2. Send text to Groq via Vercel
+                status.innerText = "Step 2/2: Organizing with AI...";
+                const response = await fetch('/api/process', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ type: 'extraction', payload: text })
+                });
+
+                const data = await response.json();
+                
+                if (data.error) throw new Error(data.error);
+
+                // 3. Display Results
+                data.comments.forEach(c => {
+                    const div = document.createElement('div');
+                    div.className = "p-4 border rounded bg-gray-50";
+                    div.innerHTML = `<strong>${c.author}</strong> <span class="text-gray-500 text-sm">${c.timestamp}</span><p>${c.text}</p>`;
+                    results.appendChild(div);
+                });
+
+            } catch (err) {
+                results.innerHTML = `<div class="text-red-500 font-mono text-xs p-4 bg-red-50 rounded">${err.message}</div>`;
+            } finally {
+                status.classList.add('hidden');
                 btn.disabled = false;
             }
-        };
-
-        // --- SENTIMENT ---
-        document.getElementById('sentimentBtn').onclick = async () => {
-            const btn = document.getElementById('sentimentBtn');
-            const originalText = btn.innerHTML;
-            btn.innerHTML = "Analyzing...";
-            btn.disabled = true;
-            btn.classList.add('opacity-75');
-
-            try {
-                const texts = extractedData.map(c => c.text);
-                const data = await serverCall('sentiment', texts);
-                extractedData.forEach((c, i) => c.sentiment = data.sentiments[i] || 'Neutral');
-                renderTable();
-                renderSov(data.sov);
-                
-                btn.innerHTML = "Sentiment Analyzed";
-                btn.classList.add('bg-gray-400', 'cursor-not-allowed');
-                btn.classList.remove('bg-purple-600', 'hover:bg-purple-700');
-            } catch (e) { 
-                showError(e.message); 
-                btn.innerHTML = originalText;
-                btn.disabled = false;
-            }
-        };
-
-        // --- UI HELPERS ---
-        function renderTable() {
-            const container = document.getElementById('tableContainer');
-            let html = '<table class="w-full text-sm text-left"><thead class="bg-gray-50 sticky top-0"><tr><th class="p-3 text-gray-500 uppercase text-xs">Author</th><th class="p-3 text-gray-500 uppercase text-xs">Comment</th><th class="p-3 text-gray-500 uppercase text-xs">Date</th><th class="p-3 text-gray-500 uppercase text-xs">Sent.</th></tr></thead><tbody class="divide-y divide-gray-100">';
-            extractedData.forEach(c => {
-                const color = c.sentiment === 'Positive' ? 'text-green-600 font-bold' : c.sentiment === 'Negative' ? 'text-red-600 font-bold' : 'text-gray-500';
-                html += `<tr class="hover:bg-gray-50 transition"><td class="p-3 font-medium text-gray-900">${c.author}</td><td class="p-3 w-1/2 text-gray-600">${c.text}</td><td class="p-3 whitespace-nowrap text-gray-400 text-xs">${c.timestamp}</td><td class="p-3 text-xs ${color}">${c.sentiment || '-'}</td></tr>`;
-            });
-            container.innerHTML = html + '</tbody></table>';
-        }
-
-        function renderSov(sov) {
-            const div = document.getElementById('sov');
-            div.classList.remove('hidden');
-            // Visual bar representation
-            div.innerHTML = `
-                <div class="flex justify-between text-xs font-bold uppercase tracking-wide text-gray-500 mb-2">
-                    <span>Sentiment Breakdown</span>
-                </div>
-                <div class="w-full h-4 bg-gray-200 rounded-full flex overflow-hidden">
-                    <div style="width: ${sov.Positive}%" class="bg-green-500 h-full" title="Positive: ${sov.Positive}%"></div>
-                    <div style="width: ${sov.Neutral}%" class="bg-gray-400 h-full" title="Neutral: ${sov.Neutral}%"></div>
-                    <div style="width: ${sov.Negative}%" class="bg-red-500 h-full" title="Negative: ${sov.Negative}%"></div>
-                </div>
-                <div class="flex justify-between text-xs mt-2 font-medium">
-                    <span class="text-green-600">Pos: ${sov.Positive}%</span>
-                    <span class="text-gray-500">Neu: ${sov.Neutral}%</span>
-                    <span class="text-red-600">Neg: ${sov.Negative}%</span>
-                </div>`;
-        }
-
-        document.getElementById('downloadBtn').onclick = () => {
-            let csv = "Content ID,Author,Comment,Likes,Date,Sentiment\n";
-            csv += extractedData.map(c => {
-                const uuid = crypto.randomUUID();
-                const text = c.text ? c.text.replace(/"/g, '""') : "";
-                const auth = c.author ? c.author.replace(/"/g, '""') : "";
-                const time = c.timestamp; 
-                const likes = c.likes || 0;
-                const sent = c.sentiment || "";
-                return `"${uuid}","${auth}","${text}",${likes},"${time}",${sent}`;
-            }).join("\n");
-
-            const link = document.createElement('a');
-            link.href = URL.createObjectURL(new Blob([csv], {type: 'text/csv'}));
-            link.download = 'comments_summary.csv';
-            link.click();
-        };
-
-        function setLoading(b) { 
-            extractBtn.disabled = b; 
-            document.getElementById('loader').classList.toggle('hidden', !b); 
-        }
-        function showError(msg) {
-            const el = document.getElementById('errorMsg');
-            el.textContent = msg;
-            el.classList.remove('hidden');
-        }
-
-        function parseRelativeTime(relativeString, referenceDate) {
-            if (!relativeString) return "N/A";
-            const now = new Date(referenceDate);
-            const str = String(relativeString).toLowerCase().trim();
-            let date = new Date(now);
-            const matchers = [{ regex: /(\d+)\s*s(ec)?/, unit: 'seconds' }, { regex: /(\d+)\s*m(in)?/, unit: 'minutes' }, { regex: /(\d+)\s*h(r|our)?/, unit: 'hours' }, { regex: /(\d+)\s*d(ay)?/, unit: 'days' }, { regex: /(\d+)\s*w(k|eek)?/, unit: 'weeks' }, { regex: /(\d+)\s*mo(nth)?/, unit: 'months' }, { regex: /(\d+)\s*y(r|ear)?/, unit: 'years' }];
-            let matched = false;
-            for (const { regex, unit } of matchers) {
-                const match = str.match(regex);
-                if (match) {
-                    const value = parseInt(match[1], 10);
-                    if (unit === 'seconds') date.setSeconds(date.getSeconds() - value);
-                    if (unit === 'minutes') date.setMinutes(date.getMinutes() - value);
-                    if (unit === 'hours') date.setHours(date.getHours() - value);
-                    if (unit === 'days') date.setDate(date.getDate() - value);
-                    if (unit === 'weeks') date.setDate(date.getDate() - value * 7);
-                    if (unit === 'months') date.setMonth(date.getMonth() - value);
-                    if (unit === 'years') date.setFullYear(date.getFullYear() - value);
-                    matched = true;
-                    break;
-                }
-            }
-            if (str.includes("yesterday")) { date.setDate(date.getDate() - 1); matched = true; }
-            if (!matched) {
-                const parsedDate = new Date(str);
-                if (!isNaN(parsedDate.getTime())) {
-                    if (!/(\d{4})/.test(str)) { parsedDate.setFullYear(now.getFullYear()); if (parsedDate > now) parsedDate.setFullYear(now.getFullYear() - 1); }
-                    date = parsedDate;
-                } else { return relativeString; }
-            }
-            const day = String(date.getDate()).padStart(2, '0');
-            const month = String(date.getMonth() + 1).padStart(2, '0');
-            const year = date.getFullYear();
-            const hours = String(date.getHours()).padStart(2, '0');
-            const minutes = String(date.getMinutes()).padStart(2, '0');
-            const seconds = String(date.getSeconds()).padStart(2, '0');
-            return `${day}/${month}/${year}, ${hours}:${minutes}:${seconds}`;
         }
     </script>
 </body>
