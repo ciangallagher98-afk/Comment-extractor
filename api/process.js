@@ -7,19 +7,19 @@ export default async function handler(req, res) {
     try {
         const { payload } = req.body;
         
-        // Using Llama 3.3 (2026 Production Standard)
         const chat = await groq.chat.completions.create({
             model: "llama-3.3-70b-versatile",
             messages: [{
                 role: "user",
                 content: `
-                Clean this OCR text from social media comments and analyze it.
+                Clean this OCR text from multiple social media comment screenshots.
                 Text: "${payload}"
 
-                Tasks:
-                1. Extract author, comment text, and like count (number).
-                2. Assign sentiment: "Positive", "Negative", or "Neutral".
-                3. Calculate Share of Voice (SOV) percentages for all three.
+                Special Instructions:
+                1. If a comment block is unreadable or just an image/GIF, set the text to "[Image/GIF Only]" and sentiment to "Neutral".
+                2. Extract author, comment text, and like count.
+                3. Assign sentiment: "Positive", "Negative", or "Neutral".
+                4. Calculate SOV percentages (Exclude [Image/GIF Only] comments from the SOV math).
 
                 Return ONLY JSON:
                 {
