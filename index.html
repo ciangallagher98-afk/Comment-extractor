@@ -5,10 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Social Analytics Pro | 2026</title>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-slate-50 min-h-screen p-4 md:p-8 text-slate-900">
-    <div class="max-w-5xl mx-auto">
+<body class="bg-slate-50 min-h-screen p-4 md:p-8 text-slate-900 font-sans">
+    <div class="max-w-6xl mx-auto">
         <div class="flex flex-col md:flex-row justify-between items-center mb-8 gap-4 bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
             <div>
                 <h1 class="text-2xl font-bold text-slate-800 tracking-tight">Social Analytics Pro</h1>
@@ -25,38 +26,36 @@
             </div>
         </div>
 
-        <div id="stats-container" class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8 hidden">
-            <div class="bg-white p-6 rounded-2xl shadow-sm border-l-4 border-indigo-500">
-                <p class="text-xs uppercase tracking-wider text-slate-400 font-bold">Total Comments</p>
-                <h2 id="stat-count" class="text-3xl font-bold mt-1">0</h2>
+        <div id="top-row" class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8 hidden">
+            <div class="md:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                <h3 class="text-xs uppercase tracking-widest text-slate-400 font-black mb-4">AI Summary</h3>
+                <p id="summary-text" class="text-slate-700 leading-relaxed italic">Generating summary...</p>
             </div>
-            <div class="bg-white p-6 rounded-2xl shadow-sm border-l-4 border-emerald-500">
-                <p class="text-xs uppercase tracking-wider text-slate-400 font-bold">Sentiment SOV</p>
-                <div id="stat-sov" class="text-xs font-bold mt-3 flex gap-2"></div>
-            </div>
-            <div class="bg-white p-6 rounded-2xl shadow-sm border-l-4 border-amber-500">
-                <p class="text-xs uppercase tracking-wider text-slate-400 font-bold">Top Comment</p>
-                <p id="stat-top" class="text-sm text-slate-600 mt-2 italic line-clamp-2">None</p>
+            <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col items-center">
+                <h3 class="text-xs uppercase tracking-widest text-slate-400 font-black mb-4">Sentiment SOV</h3>
+                <div class="w-full max-w-[180px]">
+                    <canvas id="sovChart"></canvas>
+                </div>
             </div>
         </div>
 
         <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
             <div class="p-6 border-b border-slate-100 flex flex-col md:flex-row justify-between items-center gap-4">
                 <h3 class="font-bold text-slate-800">Extracted Insights</h3>
-                <div id="export-actions" class="hidden flex items-center gap-4">
-                    <button onclick="downloadCSV(false)" class="text-indigo-600 text-xs font-bold hover:bg-indigo-50 px-3 py-2 rounded-lg transition-colors">📥 DATA ONLY</button>
-                    <button onclick="downloadCSV(true)" class="bg-indigo-50 text-indigo-700 text-xs font-bold px-3 py-2 rounded-lg hover:bg-indigo-100 transition-colors">📊 WITH SENTIMENT</button>
+                <div id="export-actions" class="hidden flex items-center gap-3">
+                    <button onclick="downloadCSV(false)" class="text-indigo-600 text-xs font-bold hover:bg-indigo-50 px-3 py-2 rounded-lg transition-colors border border-indigo-100">📥 DATA ONLY</button>
+                    <button onclick="downloadCSV(true)" class="bg-indigo-600 text-white text-xs font-bold px-3 py-2 rounded-lg hover:bg-indigo-700 transition-colors shadow-sm">📊 WITH SENTIMENT</button>
                 </div>
             </div>
             <div class="overflow-x-auto">
                 <table class="w-full text-left border-collapse">
                     <thead class="bg-slate-50/50">
                         <tr>
-                            <th class="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Calculated Time (ISO)</th>
-                            <th class="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Author</th>
+                            <th class="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">PublishedAt</th>
+                            <th class="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Screen Name</th>
                             <th class="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest w-1/3">Comment</th>
-                            <th class="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Likes</th>
-                            <th class="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Sentiment</th>
+                            <th class="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Likes</th>
+                            <th class="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Sentiment</th>
                         </tr>
                     </thead>
                     <tbody id="table-body" class="divide-y divide-slate-100">
@@ -69,7 +68,10 @@
 
     <script>
         let currentData = [];
+        let summaryData = "";
+        let sovData = {};
         let analysisTimestamp = null;
+        let myChart = null;
 
         function handleFileSelect() {
             const files = document.getElementById('upload').files;
@@ -81,12 +83,10 @@
             }
         }
 
-        // Helper: Convert relative strings (2h, 5d) to ISO 8601
         function convertToISO(relative) {
             const date = new Date(analysisTimestamp);
-            const r = relative.toLowerCase();
+            const r = (relative || "0s").toLowerCase();
             const val = parseInt(r.match(/\d+/) || 0);
-
             if (r.includes('s')) date.setSeconds(date.getSeconds() - val);
             else if (r.includes('m') && !r.includes('mo')) date.setMinutes(date.getMinutes() - val);
             else if (r.includes('h')) date.setHours(date.getHours() - val);
@@ -94,8 +94,7 @@
             else if (r.includes('w')) date.setDate(date.getDate() - (val * 7));
             else if (r.includes('mo')) date.setMonth(date.getMonth() - val);
             else if (r.includes('y')) date.setFullYear(date.getFullYear() - val);
-            
-            return date.toISOString(); // Returns YYYY-MM-DDTHH:mm:ss.sssZ
+            return date.toISOString();
         }
 
         async function startAnalysis() {
@@ -103,17 +102,17 @@
             const btn = document.getElementById('btn-run');
             const tbody = document.getElementById('table-body');
             
-            analysisTimestamp = new Date(); // Lock the "Now" time
+            analysisTimestamp = new Date();
             btn.disabled = true;
             btn.innerText = "OCR Processing...";
-            tbody.innerHTML = `<tr><td colspan="5" class="p-12 text-center text-indigo-600 font-medium animate-pulse text-sm">Processing Optical Character Recognition...</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="5" class="p-12 text-center text-indigo-600 font-medium animate-pulse text-sm">Processing Images...</td></tr>`;
 
             try {
                 let fullOCRText = "";
                 for (let i = 0; i < files.length; i++) {
                     btn.innerText = `Reading Image ${i+1}/${files.length}...`;
                     const { data: { text } } = await Tesseract.recognize(files[i], 'eng');
-                    fullOCRText += `\n[SCREENSHOT ${i+1}]\n${text}`;
+                    fullOCRText += `\n[IMAGE ${i+1}]\n${text}`;
                 }
 
                 btn.innerText = "AI Classifying...";
@@ -127,7 +126,9 @@
                 if (result.error) throw new Error(result.error);
 
                 currentData = result.comments;
-                renderDashboard(result);
+                summaryData = result.summary;
+                sovData = result.sov;
+                renderDashboard();
 
             } catch (err) {
                 alert("Critical Error: " + err.message);
@@ -138,21 +139,21 @@
             }
         }
 
-        function renderDashboard(data) {
+        function renderDashboard() {
             const tbody = document.getElementById('table-body');
-            document.getElementById('stats-container').classList.remove('hidden');
+            document.getElementById('top-row').classList.remove('hidden');
             document.getElementById('export-actions').classList.remove('hidden');
+            document.getElementById('summary-text').innerText = summaryData;
 
-            tbody.innerHTML = data.comments.map(c => {
+            tbody.innerHTML = currentData.map(c => {
                 const isImg = c.text.includes("[Image/GIF Only]");
-                const isoTime = convertToISO(c.timestamp);
                 return `
                     <tr class="hover:bg-slate-50 transition-colors ${isImg ? 'opacity-50' : ''}">
-                        <td class="p-4 font-mono text-[10px] text-slate-400">${isoTime}</td>
+                        <td class="p-4 font-mono text-[10px] text-slate-400">${convertToISO(c.timestamp)}</td>
                         <td class="p-4 font-bold text-slate-700 text-sm">${c.author}</td>
                         <td class="p-4 text-sm ${isImg ? 'italic text-slate-400' : 'text-slate-600'}">${c.text}</td>
-                        <td class="p-4 font-black text-slate-800 text-xs">${c.likes}</td>
-                        <td class="p-4">
+                        <td class="p-4 font-black text-slate-800 text-xs text-center">${c.likes}</td>
+                        <td class="p-4 text-right">
                             <span class="px-2 py-1 rounded text-[10px] font-bold uppercase ${getSentimentStyle(c.sentiment)}">
                                 ${c.sentiment}
                             </span>
@@ -161,16 +162,27 @@
                 `;
             }).join('');
 
-            // Stats
-            document.getElementById('stat-count').innerText = data.comments.length;
-            const top = [...data.comments].sort((a,b) => b.likes - a.likes)[0];
-            document.getElementById('stat-top').innerText = top ? `"${top.text}"` : "N/A";
-            
-            document.getElementById('stat-sov').innerHTML = `
-                <span class="text-emerald-600">POS ${data.sov.Positive}%</span>
-                <span class="text-rose-600">NEG ${data.sov.Negative}%</span>
-                <span class="text-slate-400">NEU ${data.sov.Neutral}%</span>
-            `;
+            updateChart();
+        }
+
+        function updateChart() {
+            const ctx = document.getElementById('sovChart').getContext('2d');
+            if (myChart) myChart.destroy();
+            myChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Positive', 'Negative', 'Neutral'],
+                    datasets: [{
+                        data: [sovData.Positive, sovData.Negative, sovData.Neutral],
+                        backgroundColor: ['#10b981', '#f43f5e', '#94a3b8'],
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    plugins: { legend: { display: false } },
+                    cutout: '70%'
+                }
+            });
         }
 
         function getSentimentStyle(s) {
@@ -180,16 +192,17 @@
         }
 
         function downloadCSV(includeSentiment) {
-            // Requirement: Exclude Image/GIF Only from CSV
             const exportable = currentData.filter(c => !c.text.includes("[Image/GIF Only]"));
             
-            let headers = "Timestamp,Author,Content,Likes";
+            // Field updates: UUID, PublishedAt, Screen Name
+            let headers = "UUID,PublishedAt,Screen Name,Content,Likes";
             if (includeSentiment) headers += ",Sentiment";
             
             let csvRows = [headers];
 
             exportable.forEach(c => {
                 const row = [
+                    crypto.randomUUID(), // Add Random UUID
                     convertToISO(c.timestamp),
                     `"${c.author.replace(/"/g, '""')}"`,
                     `"${c.text.replace(/"/g, '""')}"`,
@@ -203,7 +216,7 @@
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `analytics_${includeSentiment ? 'full' : 'data'}_${Date.now()}.csv`;
+            a.download = `analytics_${includeSentiment ? 'full' : 'data'}.csv`;
             a.click();
         }
     </script>
