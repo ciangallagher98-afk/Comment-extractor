@@ -1,4 +1,5 @@
 import Groq from "groq-sdk";
+
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 export default async function handler(req, res) {
@@ -6,24 +7,26 @@ export default async function handler(req, res) {
 
     try {
         const { payload } = req.body;
-        
+
         const chat = await groq.chat.completions.create({
             model: "llama-3.3-70b-versatile",
             messages: [{
                 role: "user",
                 content: `
-                Clean this OCR text from multiple social media comment screenshots.
-                Text: "${payload}"
+                You are a data extraction expert. Below is raw OCR text from social media screenshots.
+                
+                Input Text: "${payload}"
 
-                Special Instructions:
-                1. If a comment block is unreadable or just an image/GIF, set the text to "[Image/GIF Only]" and sentiment to "Neutral".
-                2. Extract author, comment text, and like count.
-                3. Assign sentiment: "Positive", "Negative", or "Neutral".
-                4. Calculate SOV percentages (Exclude [Image/GIF Only] comments from the SOV math).
+                Instructions:
+                1. Extract every individual comment. 
+                2. For each, find: Author, Comment Text, Likes (number), and Raw Timestamp (e.g., "2h", "5d", "now").
+                3. If a comment is just an image/GIF or illegible, use text "[Image/GIF Only]" and sentiment "Neutral".
+                4. Assign Sentiment: "Positive", "Negative", or "Neutral".
+                5. Calculate SOV %: (Count of Positive/Negative/Neutral divided by total real-text comments).
 
-                Return ONLY JSON:
+                Format as strictly valid JSON:
                 {
-                    "comments": [{ "author": "...", "text": "...", "likes": 0, "sentiment": "..." }],
+                    "comments": [{ "author": "...", "text": "...", "likes": 0, "timestamp": "...", "sentiment": "..." }],
                     "sov": { "Positive": 0, "Negative": 0, "Neutral": 0 }
                 }`
             }],
