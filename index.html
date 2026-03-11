@@ -3,62 +3,64 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Social Analytics Dashboard 2026</title>
+    <title>Social Analytics Pro | 2026</title>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-slate-50 min-h-screen p-4 md:p-8">
+<body class="bg-slate-50 min-h-screen p-4 md:p-8 text-slate-900">
     <div class="max-w-5xl mx-auto">
-        <div class="flex flex-col md:flex-row justify-between items-center mb-8 gap-4 bg-white p-6 rounded-2xl shadow-sm">
+        <div class="flex flex-col md:flex-row justify-between items-center mb-8 gap-4 bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
             <div>
-                <h1 class="text-2xl font-bold text-slate-800">Comment Analytics</h1>
-                <p class="text-slate-500 text-sm">Upload screenshots to extract and analyze</p>
+                <h1 class="text-2xl font-bold text-slate-800 tracking-tight">Social Analytics Pro</h1>
+                <p id="file-status" class="text-slate-500 text-sm">Upload screenshots to begin analysis</p>
             </div>
             <div class="flex items-center gap-3">
                 <input type="file" id="upload" accept="image/*" multiple class="hidden" onchange="handleFileSelect()">
-                <button onclick="document.getElementById('upload').click()" class="bg-slate-200 text-slate-700 px-4 py-2 rounded-lg font-medium hover:bg-slate-300">
+                <button onclick="document.getElementById('upload').click()" class="bg-slate-100 text-slate-700 px-5 py-2.5 rounded-xl font-semibold hover:bg-slate-200 transition-all">
                     Choose Images
                 </button>
-                <button onclick="startAnalysis()" id="btn-run" class="hidden bg-indigo-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-indigo-700 disabled:opacity-50">
+                <button onclick="startAnalysis()" id="btn-run" class="hidden bg-indigo-600 text-white px-6 py-2.5 rounded-xl font-semibold hover:bg-indigo-700 shadow-lg shadow-indigo-100 transition-all">
                     Analyze Now
                 </button>
             </div>
         </div>
 
-        <div id="file-list" class="mb-6 text-sm text-slate-500"></div>
-
         <div id="stats-container" class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8 hidden">
-            <div class="bg-white p-6 rounded-2xl shadow-sm border-b-4 border-indigo-500">
-                <p class="text-sm text-slate-500 font-medium">Total Comments</p>
-                <h2 id="stat-count" class="text-3xl font-bold text-slate-800">0</h2>
+            <div class="bg-white p-6 rounded-2xl shadow-sm border-l-4 border-indigo-500">
+                <p class="text-xs uppercase tracking-wider text-slate-400 font-bold">Total Comments</p>
+                <h2 id="stat-count" class="text-3xl font-bold mt-1">0</h2>
             </div>
-            <div class="bg-white p-6 rounded-2xl shadow-sm border-b-4 border-emerald-500">
-                <p class="text-sm text-slate-500 font-medium">Sentiment SOV</p>
-                <div id="stat-sov" class="text-xs font-bold mt-2 flex gap-1 items-center"></div>
+            <div class="bg-white p-6 rounded-2xl shadow-sm border-l-4 border-emerald-500">
+                <p class="text-xs uppercase tracking-wider text-slate-400 font-bold">Sentiment SOV</p>
+                <div id="stat-sov" class="text-xs font-bold mt-3 flex gap-2"></div>
             </div>
-            <div class="bg-white p-6 rounded-2xl shadow-sm border-b-4 border-amber-500">
-                <p class="text-sm text-slate-500 font-medium">Top Comment (Likes)</p>
-                <p id="stat-top" class="text-sm text-slate-700 mt-1 italic line-clamp-2">N/A</p>
+            <div class="bg-white p-6 rounded-2xl shadow-sm border-l-4 border-amber-500">
+                <p class="text-xs uppercase tracking-wider text-slate-400 font-bold">Top Comment</p>
+                <p id="stat-top" class="text-sm text-slate-600 mt-2 italic line-clamp-2">None</p>
             </div>
         </div>
 
-        <div class="bg-white rounded-2xl shadow-sm overflow-hidden">
-            <div class="p-6 border-b flex justify-between items-center">
-                <h3 class="font-bold text-slate-800">Extracted Data</h3>
-                <button onclick="downloadCSV()" id="btn-csv" class="text-indigo-600 text-sm font-bold hidden">+ Export CSV</button>
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+            <div class="p-6 border-b border-slate-100 flex flex-col md:flex-row justify-between items-center gap-4">
+                <h3 class="font-bold text-slate-800">Extracted Insights</h3>
+                <div id="export-actions" class="hidden flex items-center gap-4">
+                    <button onclick="downloadCSV(false)" class="text-indigo-600 text-xs font-bold hover:bg-indigo-50 px-3 py-2 rounded-lg transition-colors">📥 DATA ONLY</button>
+                    <button onclick="downloadCSV(true)" class="bg-indigo-50 text-indigo-700 text-xs font-bold px-3 py-2 rounded-lg hover:bg-indigo-100 transition-colors">📊 WITH SENTIMENT</button>
+                </div>
             </div>
             <div class="overflow-x-auto">
                 <table class="w-full text-left border-collapse">
-                    <thead class="bg-slate-50">
+                    <thead class="bg-slate-50/50">
                         <tr>
-                            <th class="p-4 text-xs font-bold text-slate-500 uppercase">Author</th>
-                            <th class="p-4 text-xs font-bold text-slate-500 uppercase w-1/2">Comment</th>
-                            <th class="p-4 text-xs font-bold text-slate-500 uppercase">Likes</th>
-                            <th class="p-4 text-xs font-bold text-slate-500 uppercase">Sentiment</th>
+                            <th class="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Calculated Time (ISO)</th>
+                            <th class="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Author</th>
+                            <th class="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest w-1/3">Comment</th>
+                            <th class="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Likes</th>
+                            <th class="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Sentiment</th>
                         </tr>
                     </thead>
-                    <tbody id="table-body" class="divide-y">
-                        <tr><td colspan="4" class="p-8 text-center text-slate-400 italic">Upload images to begin.</td></tr>
+                    <tbody id="table-body" class="divide-y divide-slate-100">
+                        <tr><td colspan="5" class="p-12 text-center text-slate-400 italic">No files selected. Upload screenshots to begin.</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -67,46 +69,58 @@
 
     <script>
         let currentData = [];
+        let analysisTimestamp = null;
 
         function handleFileSelect() {
             const files = document.getElementById('upload').files;
-            const btnRun = document.getElementById('btn-run');
-            const fileList = document.getElementById('file-list');
-
+            const btn = document.getElementById('btn-run');
+            const status = document.getElementById('file-status');
             if (files.length > 0) {
-                btnRun.classList.remove('hidden');
-                fileList.innerText = `${files.length} file(s) selected: ` + Array.from(files).map(f => f.name).join(', ');
-            } else {
-                btnRun.classList.add('hidden');
-                fileList.innerText = "";
+                btn.classList.remove('hidden');
+                status.innerText = `${files.length} image(s) ready for analysis.`;
             }
+        }
+
+        // Helper: Convert relative strings (2h, 5d) to ISO 8601
+        function convertToISO(relative) {
+            const date = new Date(analysisTimestamp);
+            const r = relative.toLowerCase();
+            const val = parseInt(r.match(/\d+/) || 0);
+
+            if (r.includes('s')) date.setSeconds(date.getSeconds() - val);
+            else if (r.includes('m') && !r.includes('mo')) date.setMinutes(date.getMinutes() - val);
+            else if (r.includes('h')) date.setHours(date.getHours() - val);
+            else if (r.includes('d')) date.setDate(date.getDate() - val);
+            else if (r.includes('w')) date.setDate(date.getDate() - (val * 7));
+            else if (r.includes('mo')) date.setMonth(date.getMonth() - val);
+            else if (r.includes('y')) date.setFullYear(date.getFullYear() - val);
+            
+            return date.toISOString(); // Returns YYYY-MM-DDTHH:mm:ss.sssZ
         }
 
         async function startAnalysis() {
             const files = document.getElementById('upload').files;
             const btn = document.getElementById('btn-run');
-            const tableBody = document.getElementById('table-body');
+            const tbody = document.getElementById('table-body');
             
+            analysisTimestamp = new Date(); // Lock the "Now" time
             btn.disabled = true;
-            btn.innerText = "Processing OCR...";
-            tableBody.innerHTML = `<tr><td colspan="4" class="p-8 text-center text-indigo-600 animate-pulse font-medium">Reading images... this may take a moment.</td></tr>`;
+            btn.innerText = "OCR Processing...";
+            tbody.innerHTML = `<tr><td colspan="5" class="p-12 text-center text-indigo-600 font-medium animate-pulse text-sm">Processing Optical Character Recognition...</td></tr>`;
 
             try {
-                let combinedText = "";
-
-                // 1. Loop through all images for OCR
+                let fullOCRText = "";
                 for (let i = 0; i < files.length; i++) {
-                    btn.innerText = `OCR: Image ${i+1}/${files.length}`;
+                    btn.innerText = `Reading Image ${i+1}/${files.length}...`;
                     const { data: { text } } = await Tesseract.recognize(files[i], 'eng');
-                    combinedText += `\n--- NEW IMAGE START ---\n${text}`;
+                    fullOCRText += `\n[SCREENSHOT ${i+1}]\n${text}`;
                 }
-                
-                // 2. AI Analysis Step
-                btn.innerText = "AI Analyzing...";
+
+                btn.innerText = "AI Classifying...";
                 const response = await fetch('/api/process', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ payload: combinedText })
+                    body: JSON.stringify({ payload: fullOCRText })
                 });
 
                 const result = await response.json();
@@ -116,8 +130,8 @@
                 renderDashboard(result);
 
             } catch (err) {
-                alert("Error: " + err.message);
-                tableBody.innerHTML = `<tr><td colspan="4" class="p-8 text-center text-red-500">Failed to analyze. Check console.</td></tr>`;
+                alert("Critical Error: " + err.message);
+                tbody.innerHTML = `<tr><td colspan="5" class="p-12 text-center text-red-500">Analysis Failed.</td></tr>`;
             } finally {
                 btn.disabled = false;
                 btn.innerText = "Analyze Now";
@@ -126,19 +140,20 @@
 
         function renderDashboard(data) {
             const tbody = document.getElementById('table-body');
-            const sovDiv = document.getElementById('stat-sov');
             document.getElementById('stats-container').classList.remove('hidden');
-            document.getElementById('btn-csv').classList.remove('hidden');
-            
+            document.getElementById('export-actions').classList.remove('hidden');
+
             tbody.innerHTML = data.comments.map(c => {
-                const isImage = c.text.includes("[Image/GIF Only]");
+                const isImg = c.text.includes("[Image/GIF Only]");
+                const isoTime = convertToISO(c.timestamp);
                 return `
-                    <tr class="hover:bg-slate-50 ${isImage ? 'opacity-60' : ''}">
-                        <td class="p-4 font-medium text-slate-700">${c.author}</td>
-                        <td class="p-4 text-sm ${isImage ? 'italic text-slate-400' : 'text-slate-600'}">${c.text}</td>
-                        <td class="p-4 text-slate-500 font-bold">${c.likes}</td>
+                    <tr class="hover:bg-slate-50 transition-colors ${isImg ? 'opacity-50' : ''}">
+                        <td class="p-4 font-mono text-[10px] text-slate-400">${isoTime}</td>
+                        <td class="p-4 font-bold text-slate-700 text-sm">${c.author}</td>
+                        <td class="p-4 text-sm ${isImg ? 'italic text-slate-400' : 'text-slate-600'}">${c.text}</td>
+                        <td class="p-4 font-black text-slate-800 text-xs">${c.likes}</td>
                         <td class="p-4">
-                            <span class="px-2 py-1 rounded-full text-[10px] font-bold uppercase ${getSentimentClass(c.sentiment)}">
+                            <span class="px-2 py-1 rounded text-[10px] font-bold uppercase ${getSentimentStyle(c.sentiment)}">
                                 ${c.sentiment}
                             </span>
                         </td>
@@ -146,45 +161,49 @@
                 `;
             }).join('');
 
+            // Stats
             document.getElementById('stat-count').innerText = data.comments.length;
+            const top = [...data.comments].sort((a,b) => b.likes - a.likes)[0];
+            document.getElementById('stat-top').innerText = top ? `"${top.text}"` : "N/A";
             
-            const sorted = [...data.comments].sort((a, b) => b.likes - a.likes);
-            if(sorted.length > 0) {
-                document.getElementById('stat-top').innerText = `"${sorted[0].text}"`;
-            }
-
-            const sov = data.sov;
-            sovDiv.innerHTML = `
-                <span class="text-emerald-600 font-bold">POS ${sov.Positive}%</span>
-                <span class="mx-1">|</span>
-                <span class="text-rose-600 font-bold">NEG ${sov.Negative}%</span>
-                <span class="mx-1">|</span>
-                <span class="text-slate-500 font-bold">NEU ${sov.Neutral}%</span>
+            document.getElementById('stat-sov').innerHTML = `
+                <span class="text-emerald-600">POS ${data.sov.Positive}%</span>
+                <span class="text-rose-600">NEG ${data.sov.Negative}%</span>
+                <span class="text-slate-400">NEU ${data.sov.Neutral}%</span>
             `;
         }
 
-        function getSentimentClass(s) {
-            if (s === 'Positive') return 'bg-emerald-100 text-emerald-700';
-            if (s === 'Negative') return 'bg-rose-100 text-rose-700';
-            return 'bg-slate-100 text-slate-700';
+        function getSentimentStyle(s) {
+            if (s === 'Positive') return 'bg-emerald-50 text-emerald-600';
+            if (s === 'Negative') return 'bg-rose-50 text-rose-600';
+            return 'bg-slate-100 text-slate-500';
         }
 
-        function downloadCSV() {
-            // Filter out Image/GIF only comments for the CSV
-            const exportableData = currentData.filter(c => !c.text.includes("[Image/GIF Only]"));
-
-            let csv = "Date,Author,Content,Likes,Sentiment\n";
-            const today = new Date().toLocaleDateString();
+        function downloadCSV(includeSentiment) {
+            // Requirement: Exclude Image/GIF Only from CSV
+            const exportable = currentData.filter(c => !c.text.includes("[Image/GIF Only]"));
             
-            exportableData.forEach(c => {
-                csv += `${today},"${c.author.replace(/"/g, '""')}","${c.text.replace(/"/g, '""')}",${c.likes},${c.sentiment}\n`;
+            let headers = "Timestamp,Author,Content,Likes";
+            if (includeSentiment) headers += ",Sentiment";
+            
+            let csvRows = [headers];
+
+            exportable.forEach(c => {
+                const row = [
+                    convertToISO(c.timestamp),
+                    `"${c.author.replace(/"/g, '""')}"`,
+                    `"${c.text.replace(/"/g, '""')}"`,
+                    c.likes
+                ];
+                if (includeSentiment) row.push(c.sentiment);
+                csvRows.push(row.join(","));
             });
 
-            const blob = new Blob([csv], { type: 'text/csv' });
+            const blob = new Blob([csvRows.join("\n")], { type: 'text/csv' });
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
-            a.setAttribute('href', url);
-            a.setAttribute('download', `social_analytics_${Date.now()}.csv`);
+            a.href = url;
+            a.download = `analytics_${includeSentiment ? 'full' : 'data'}_${Date.now()}.csv`;
             a.click();
         }
     </script>
