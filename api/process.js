@@ -1,5 +1,4 @@
 import Groq from "groq-sdk";
-
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 export default async function handler(req, res) {
@@ -13,20 +12,18 @@ export default async function handler(req, res) {
             messages: [{
                 role: "user",
                 content: `
-                You are a data extraction expert. Below is raw OCR text from social media screenshots.
-                
-                Input Text: "${payload}"
+                Clean and analyze this social media OCR text: "${payload}"
 
-                Instructions:
-                1. Extract every individual comment. 
-                2. For each, find: Author, Comment Text, Likes (number), and Raw Timestamp (e.g., "2h", "5d", "now").
-                3. If a comment is just an image/GIF or illegible, use text "[Image/GIF Only]" and sentiment "Neutral".
-                4. Assign Sentiment: "Positive", "Negative", or "Neutral".
-                5. Calculate SOV %: (Count of Positive/Negative/Neutral divided by total real-text comments).
+                1. Extract every comment: Author, Text, Likes, and Raw Timestamp (e.g., "2h", "now").
+                2. If comment is just an image, use "[Image/GIF Only]" and sentiment "Neutral".
+                3. Categorize Sentiment: "Positive", "Negative", or "Neutral".
+                4. Create a 2-3 sentence 'summary' of the main conversation topics and mood.
+                5. Calculate SOV percentages (Exclude [Image/GIF Only] from math).
 
-                Format as strictly valid JSON:
+                Return ONLY JSON:
                 {
                     "comments": [{ "author": "...", "text": "...", "likes": 0, "timestamp": "...", "sentiment": "..." }],
+                    "summary": "...",
                     "sov": { "Positive": 0, "Negative": 0, "Neutral": 0 }
                 }`
             }],
