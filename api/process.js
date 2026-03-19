@@ -11,14 +11,14 @@ export default async function handler(req, res) {
             model: "llama-3.3-70b-versatile",
             messages: [{
                 role: "user",
-                content: `
-                Clean and analyze this social media OCR text: "${payload}"
+                content: `Analyze this raw OCR text from social media screenshots: "${payload}"
 
-                1. Extract every comment: Author, Text, Likes, and Raw Timestamp (e.g., "2h", "now").
-                2. If comment is just an image, use "[Image/GIF Only]" and sentiment "Neutral".
-                3. Categorize Sentiment: "Positive", "Negative", or "Neutral".
-                4. Create a 2-3 sentence 'summary' of the main conversation topics and mood.
-                5. Calculate SOV percentages (Exclude [Image/GIF Only] from math).
+                1. Extract every individual comment.
+                2. Data points: Author (as "author"), Text (as "text"), Likes (as "likes"), and Raw Timestamp (as "timestamp" e.g., "5h", "now").
+                3. Handle images/GIFs: If no text, set text to "[Image/GIF Only]" and sentiment to "Neutral".
+                4. Sentiment: Categorize as "Positive", "Negative", or "Neutral".
+                5. Summary: Write a 2-3 sentence overview of the conversation (as "summary").
+                6. SOV: Calculate % for "Positive", "Negative", "Neutral" as whole integers (as "sov").
 
                 Return ONLY JSON:
                 {
