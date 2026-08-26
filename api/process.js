@@ -1,13 +1,21 @@
 import OpenAI from "openai";
 
+const BASE_URL = process.env.DASHSCOPE_BASE_URL || "https://dashscope-intl.aliyuncs.com/compatible-mode/v1";
+const MODEL = process.env.VISION_MODEL || "qwen3-vl-plus";
+
+// Reading several screenshots takes well over the 10s default Vercel allows.
+export const maxDuration = 60;
+
 // QwenCloud / DashScope exposes an OpenAI-compatible endpoint, so the standard
-// openai client works unchanged apart from the baseURL.
+// openai client works unchanged apart from the baseURL. Retries are capped at 1
+// because a retry re-uploads the whole multi-megabyte image payload; the default
+// of 2 turns one slow failure into three and can outlast the function itself.
 const client = new OpenAI({
     apiKey: process.env.DASHSCOPE_API_KEY,
-    baseURL: process.env.DASHSCOPE_BASE_URL || "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+    baseURL: BASE_URL,
+    timeout: 50_000,
+    maxRetries: 1
 });
-
-const MODEL = process.env.VISION_MODEL || "qwen3-vl-plus";
 const MAX_IMAGES = 8;
 const MAX_PAYLOAD_BYTES = 4_000_000; // Vercel caps serverless request bodies around 4.5MB.
 
@@ -104,7 +112,47 @@ function normalise(parsed) {
     return { comments, summary: String(parsed?.summary ?? ""), sov };
 }
 
+// "Connection error." on its own says nothing actionable. Walk the cause chain
+// so the underlying socket code (ENOTFOUND, ECONNREFUSED, ETIMEDOUT...) surfaces.
+function describeError(error) {
+    const codes = [];
+    const seen = new Set();
+    let current = error;
+    while (current && typeof current === 'object' && !seen.has(current)) {
+        seen.add(current);
+        const code = current.code || current.errno;
+        if (code && !codes.includes(String(code))) codes.push(String(code));
+        current = current.cause;
+    }
+    const suffix = codes.length ? ` (${codes.join(' <- ')})` : '';
+    return `${error?.message || 'Analysis failed.'}${suffix}`;
+}
+
+// GET /api/process runs a tiny text-only request against the same client. It
+// separates "cannot reach the endpoint at all" from "endpoint is fine, the image
+// payload is the problem", and reports the config actually in use. Never returns
+// the key itself, only whether one is present.
+async function diagnose(res) {
+    const config = { baseURL: BASE_URL, model: MODEL, apiKeySet: Boolean(process.env.DASHSCOPE_API_KEY) };
+
+    if (!config.apiKeySet) {
+        return res.status(200).json({ ...config, ok: false, error: 'DASHSCOPE_API_KEY is not set on the server.' });
+    }
+
+    try {
+        const probe = await client.chat.completions.create({
+            model: MODEL,
+            max_tokens: 8,
+            messages: [{ role: "user", content: "Reply with the word OK." }]
+        });
+        return res.status(200).json({ ...config, ok: true, reply: probe.choices?.[0]?.message?.content ?? "" });
+    } catch (error) {
+        return res.status(200).json({ ...config, ok: false, status: error?.status ?? null, error: describeError(error) });
+    }
+}
+
 export default async function handler(req, res) {
+    if (req.method === 'GET') return diagnose(res);
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
 
     if (!process.env.DASHSCOPE_API_KEY) {
@@ -158,6 +206,6 @@ export default async function handler(req, res) {
         res.status(200).json(normalise(parseJSON(completion.choices?.[0]?.message?.content)));
     } catch (error) {
         const status = error?.status && error.status >= 400 && error.status < 600 ? error.status : 500;
-        res.status(status).json({ error: error?.message || 'Analysis failed.' });
+        res.status(status).json({ error: describeError(error), baseURL: BASE_URL, model: MODEL });
     }
 }
