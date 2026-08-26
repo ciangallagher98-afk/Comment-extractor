@@ -166,7 +166,7 @@ function describeError(error) {
 // Raw fetch, no SDK in the way, so the unwrapped failure is visible. A status
 // alone does not say why the server refused, so capture the response body too —
 // that is where Alibaba puts the actual error code.
-async function probe(url, init = {}, wantBody = false) {
+async function probe(url, init = {}, wantBody = false, bodyLimit = 600) {
     const started = Date.now();
     try {
         const response = await fetch(url, { ...init, signal: AbortSignal.timeout(8000) });
@@ -174,7 +174,9 @@ async function probe(url, init = {}, wantBody = false) {
         if (wantBody) {
             result.contentType = response.headers.get('content-type');
             result.requestId = response.headers.get('x-request-id') || response.headers.get('x-acs-request-id');
-            result.body = (await response.text()).slice(0, 600);
+            // bodyLimit must be large enough to keep the body parseable when the
+            // caller intends to parse it — truncating first makes JSON.parse fail.
+            result.body = (await response.text()).slice(0, bodyLimit);
         }
         return result;
     } catch (error) {
@@ -200,7 +202,7 @@ async function diagnose(res) {
     // direct   : what exactly does the chat endpoint say, in its own words?
     const [control, models, direct] = await Promise.all([
         probe("https://example.com"),
-        probe(`${BASE_URL}/models`, { headers: auth }, true),
+        probe(`${BASE_URL}/models`, { headers: auth }, true, 500_000),
         probe(`${BASE_URL}/chat/completions`, {
             method: "POST",
             headers: { ...auth, "Content-Type": "application/json" },
@@ -214,8 +216,8 @@ async function diagnose(res) {
     if (models.reached && models.status === 200) {
         try {
             available = JSON.parse(models.body)?.data?.map(m => m.id).filter(Boolean) ?? null;
-        } catch {
-            // leave the raw body in place
+        } catch (error) {
+            models.parseError = describeError(error);
         }
     }
     if (available) {
