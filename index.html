@@ -90,6 +90,13 @@
     <!-- ── Results ────────────────────────────────────────────── -->
     <main id="results" class="hidden space-y-6">
 
+        <!-- Shown when the model's reply was cut short and salvaged: the results
+             below are real but incomplete, and that belongs in the PDF too. -->
+        <div id="partial" class="hidden card bg-amber-50 border border-amber-200 rounded-2xl p-4 text-sm text-amber-900">
+            <strong>Partial results.</strong> The model ran out of room before finishing, so the comments below
+            stop early. Split the screenshots across two runs to capture the whole thread.
+        </div>
+
         <section id="post-card" class="card hidden bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
             <h2 class="text-[10px] uppercase tracking-widest text-slate-400 font-black mb-3">Original Post</h2>
             <div class="flex items-baseline gap-2 mb-2">
@@ -311,6 +318,8 @@
         const n = currentData.length;
         $('file-status').textContent =
             `${n} comment${n === 1 ? '' : 's'} from ${selectedFiles.length || 'uploaded'} screenshot${selectedFiles.length === 1 ? '' : 's'} · ${when}`;
+
+        $('partial').classList.toggle('hidden', !result.truncated);
 
         renderPost(result.post);
         renderStats(result.stats || {});

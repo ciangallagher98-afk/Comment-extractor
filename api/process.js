@@ -20,7 +20,12 @@ export const maxDuration = 60;
 // fetch to the identical URL returned a clean JSON response, so the SDK is not
 // used here. One POST is all this needs, which also leaves the project with no
 // runtime dependencies.
-async function callChat(payload) {
+// 429 and 5xx are transient — Gemini's free tier returns 503 under load — so
+// they are worth retrying. Everything else (400, 403, 404) is a real answer and
+// retrying it just burns the function's time budget.
+const RETRIABLE = new Set([429, 500, 502, 503, 504]);
+
+async function callOnce(payload, timeoutMs) {
     const response = await fetch(`${BASE_URL}/chat/completions`, {
         method: "POST",
         headers: {
@@ -28,7 +33,7 @@ async function callChat(payload) {
             "Content-Type": "application/json"
         },
         body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(50_000)
+        signal: AbortSignal.timeout(timeoutMs)
     });
 
     const text = await response.text();
@@ -49,6 +54,28 @@ async function callChat(payload) {
     }
 
     return JSON.parse(text);
+}
+
+// Retries are bounded by a wall-clock deadline rather than a fixed count,
+// because the function itself is killed at maxDuration. A retry is only started
+// when enough of the budget remains for it to plausibly finish.
+async function callChat(payload, budgetMs = 50_000) {
+    const deadline = Date.now() + budgetMs;
+
+    for (let attempt = 1; ; attempt++) {
+        const remaining = deadline - Date.now();
+        try {
+            return await callOnce(payload, Math.min(remaining, 45_000));
+        } catch (error) {
+            const backoff = 800 * attempt;
+            const canRetry = RETRIABLE.has(error?.status)
+                && attempt < 3
+                && (deadline - Date.now()) > backoff + 12_000;
+
+            if (!canRetry) throw error;
+            await new Promise(resolve => setTimeout(resolve, backoff));
+        }
+    }
 }
 const MAX_IMAGES = 8;
 const MAX_PAYLOAD_BYTES = 4_000_000; // Vercel caps serverless request bodies around 4.5MB.
@@ -83,6 +110,51 @@ Return ONLY a JSON object, no markdown fences and no commentary:
 
 // The model is told to return bare JSON, but VL models still wrap it in fences
 // often enough that a tolerant parse is worth the few lines.
+// Returns the open bracket stack for a JSON prefix, ignoring brackets that sit
+// inside string literals.
+function openBrackets(text) {
+    const stack = [];
+    let inString = false;
+    let escaped = false;
+
+    for (const ch of text) {
+        if (escaped) { escaped = false; continue; }
+        if (ch === '\\') { if (inString) escaped = true; continue; }
+        if (ch === '"') { inString = !inString; continue; }
+        if (inString) continue;
+
+        if (ch === '{' || ch === '[') stack.push(ch);
+        else if (ch === '}' || ch === ']') stack.pop();
+    }
+    return stack;
+}
+
+// A response cut off mid-array is still mostly good data. Trim back to the last
+// value that actually closed, then shut the structures that are still open, so a
+// truncated run yields the comments it did manage rather than nothing at all.
+function repairTruncated(text) {
+    let inString = false;
+    let escaped = false;
+    let lastClose = -1;
+
+    for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        if (escaped) { escaped = false; continue; }
+        if (ch === '\\') { if (inString) escaped = true; continue; }
+        if (ch === '"') { inString = !inString; continue; }
+        if (inString) continue;
+        if (ch === '}' || ch === ']') lastClose = i;
+    }
+    if (lastClose < 0) return null;
+
+    const prefix = text.slice(0, lastClose + 1);
+    const stack = openBrackets(prefix);
+    if (!stack.length) return null;
+
+    const closers = stack.reverse().map(b => (b === '{' ? '}' : ']')).join('');
+    return prefix + closers;
+}
+
 function parseJSON(raw) {
     const text = String(raw || "").trim();
     const candidates = [text];
@@ -96,12 +168,23 @@ function parseJSON(raw) {
 
     for (const candidate of candidates) {
         try {
-            return JSON.parse(candidate.trim());
+            return { value: JSON.parse(candidate.trim()), repaired: false };
         } catch {
             // try the next shape
         }
     }
-    throw new Error("Model did not return valid JSON.");
+
+    const repaired = repairTruncated(text.startsWith("{") ? text : text.slice(Math.max(0, first)));
+    if (repaired) {
+        try {
+            return { value: JSON.parse(repaired), repaired: true };
+        } catch {
+            // fall through to the error below
+        }
+    }
+
+    const preview = text.slice(0, 200).replace(/\s+/g, " ");
+    throw new Error(`Model did not return valid JSON. It began: "${preview}"`);
 }
 
 const SENTIMENTS = ["Positive", "Negative", "Neutral"];
@@ -364,7 +447,7 @@ export default async function handler(req, res) {
         const request = {
             model: MODEL,
             temperature: 0.1,
-            max_tokens: 8000,
+            max_tokens: 32000,
             messages: [{
                 role: "user",
                 content: [
@@ -378,13 +461,18 @@ export default async function handler(req, res) {
         try {
             completion = await callChat({ ...request, response_format: { type: "json_object" } });
         } catch (err) {
-            // Not every vision model on DashScope accepts response_format; the
-            // prompt plus tolerant parsing covers us when it doesn't.
-            if (!/response_format/i.test(err?.message || "")) throw err;
+            // Not every provider accepts response_format. Any 400 here means the
+            // request shape was rejected, so retry without it — the prompt plus
+            // tolerant parsing covers us when the constraint is unavailable.
+            if (err?.status !== 400) throw err;
             completion = await callChat(request);
         }
 
-        res.status(200).json(normalise(parseJSON(completion.choices?.[0]?.message?.content)));
+        const choice = completion.choices?.[0];
+        const { value, repaired } = parseJSON(choice?.message?.content);
+        const truncated = repaired || choice?.finish_reason === 'length';
+
+        res.status(200).json({ ...normalise(value), truncated });
     } catch (error) {
         const status = error?.status && error.status >= 400 && error.status < 600 ? error.status : 500;
         res.status(status).json({ error: describeError(error), baseURL: BASE_URL, model: MODEL });
