@@ -112,20 +112,44 @@ function normalise(parsed) {
     return { comments, summary: String(parsed?.summary ?? ""), sov };
 }
 
-// "Connection error." on its own says nothing actionable. Walk the cause chain
-// so the underlying socket code (ENOTFOUND, ECONNREFUSED, ETIMEDOUT...) surfaces.
-function describeError(error) {
+// "Connection error." on its own says nothing actionable. Walk both the cause
+// chain and AggregateError.errors — when every resolved IP for a host fails,
+// undici throws an AggregateError whose children hold the real socket codes and
+// whose own .code is undefined, so a cause-only walk reports nothing.
+function collectCodes(error) {
     const codes = [];
     const seen = new Set();
-    let current = error;
-    while (current && typeof current === 'object' && !seen.has(current)) {
+    const stack = [error];
+
+    while (stack.length) {
+        const current = stack.pop();
+        if (!current || typeof current !== 'object' || seen.has(current)) continue;
         seen.add(current);
+
         const code = current.code || current.errno;
         if (code && !codes.includes(String(code))) codes.push(String(code));
-        current = current.cause;
+
+        if (current.cause) stack.push(current.cause);
+        if (Array.isArray(current.errors)) stack.push(...current.errors);
     }
-    const suffix = codes.length ? ` (${codes.join(' <- ')})` : '';
+    return codes;
+}
+
+function describeError(error) {
+    const codes = collectCodes(error);
+    const suffix = codes.length ? ` (${codes.join(', ')})` : '';
     return `${error?.message || 'Analysis failed.'}${suffix}`;
+}
+
+// Raw fetch, no SDK in the way, so the unwrapped failure is visible.
+async function probe(url, init = {}) {
+    const started = Date.now();
+    try {
+        const response = await fetch(url, { ...init, signal: AbortSignal.timeout(8000) });
+        return { reached: true, status: response.status, ms: Date.now() - started };
+    } catch (error) {
+        return { reached: false, ms: Date.now() - started, error: describeError(error) };
+    }
 }
 
 // GET /api/process runs a tiny text-only request against the same client. It
@@ -139,15 +163,33 @@ async function diagnose(res) {
         return res.status(200).json({ ...config, ok: false, error: 'DASHSCOPE_API_KEY is not set on the server.' });
     }
 
+    // Control probe first: if this fails too, the function has no outbound
+    // egress at all and the problem is not DashScope-specific.
+    const [control, direct] = await Promise.all([
+        probe("https://example.com"),
+        probe(`${BASE_URL}/chat/completions`, {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${process.env.DASHSCOPE_API_KEY}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ model: MODEL, max_tokens: 8, messages: [{ role: "user", content: "Reply with the word OK." }] })
+        })
+    ]);
+
     try {
-        const probe = await client.chat.completions.create({
+        const sdk = await client.chat.completions.create({
             model: MODEL,
             max_tokens: 8,
             messages: [{ role: "user", content: "Reply with the word OK." }]
         });
-        return res.status(200).json({ ...config, ok: true, reply: probe.choices?.[0]?.message?.content ?? "" });
+        return res.status(200).json({ ...config, ok: true, control, direct, reply: sdk.choices?.[0]?.message?.content ?? "" });
     } catch (error) {
-        return res.status(200).json({ ...config, ok: false, status: error?.status ?? null, error: describeError(error) });
+        return res.status(200).json({
+            ...config, ok: false, control, direct,
+            status: error?.status ?? null,
+            error: describeError(error)
+        });
     }
 }
 
