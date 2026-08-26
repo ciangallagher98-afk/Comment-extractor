@@ -53,25 +53,31 @@ async function callChat(payload) {
 const MAX_IMAGES = 8;
 const MAX_PAYLOAD_BYTES = 4_000_000; // Vercel caps serverless request bodies around 4.5MB.
 
-const INSTRUCTIONS = `You are reading screenshots of a social media comments section. Extract every comment you can actually see.
+const INSTRUCTIONS = `You are reading screenshots of a social media post and its comments section. Extract the post and every comment you can actually see.
 
 Rules:
 1. Read the images in the order given. They are sequential scroll captures of the SAME thread, so they overlap: a comment visible at the bottom of one image often reappears at the top of the next. Emit each distinct comment EXACTLY ONCE, in the order it appears in the thread.
 2. Two entries are the same comment when the author and the text match, even if the like count differs slightly between captures. Keep the larger like count.
-3. Transcribe "text" verbatim. Do not fix typos, translate, summarise, or complete text that is cut off at an image edge — transcribe the part you can read.
-4. If a comment has no text (image, GIF, or sticker only), set "text" to "[Image/GIF Only]" and "sentiment" to "Neutral".
-5. "likes" is an integer. Expand abbreviated counts ("1.2K" -> 1200). If no like count is shown, use 0. Never guess a number you cannot read.
-6. "timestamp" is the raw relative label as displayed ("5h", "2d", "now"). If none is visible, use "".
-7. "replies" indent under a parent comment. Include them as normal entries in thread order; set "isReply" true for them and false for top-level comments.
-8. Ignore UI chrome: the post itself, nav bars, the comment composer, "View more replies" buttons, ads.
-9. "sentiment" is exactly one of "Positive", "Negative", "Neutral", judged on the comment's own text.
-10. "summary" is 2-3 sentences on what the conversation is actually about, including any dominant themes or disagreements.
-11. "sov" holds whole integer percentages for Positive/Negative/Neutral across the extracted comments. They must sum to 100.
+3. THE POST: the original post sits above the comments, usually in the first image. Put its author, full text, like count and timestamp in "post". Transcribe the post text in full. If the post is not visible in any image, set post to null rather than guessing.
+4. Transcribe "text" verbatim. Do not fix typos, translate, summarise, or complete text that is cut off at an image edge — transcribe the part you can read.
+5. If a comment has no text (image, GIF, or sticker only), set "text" to "[Image/GIF Only]" and "sentiment" to "Neutral".
+6. "likes" is an integer. Expand abbreviated counts ("1.2K" -> 1200). If no like count is shown, use 0. Never guess a number you cannot read.
+7. "timestamp" is the raw relative label as displayed ("5h", "2d", "now"). If none is visible, use "".
+8. "replies" indent under a parent comment. Include them as normal entries in thread order; set "isReply" true for them and false for top-level comments.
+9. Ignore UI chrome: nav bars, the comment composer, "View more replies" buttons, ads.
+10. "sentiment" is exactly one of "Positive", "Negative", "Neutral", judged on the comment's own text.
+11. "summary" is 2-3 sentences on what the conversation is actually about, including any dominant themes or disagreements.
+12. "themes" is 3 to 6 recurring topics across the comments. For each: "label" (2-4 words), "mentions" (how many comments touch it), and "sentiment" (the dominant sentiment of those comments). Order by mentions, highest first. Themes must describe what people are TALKING ABOUT, not how they feel.
+13. "standout" is up to 3 comments that best represent the conversation — the most liked, the most critical, and the most representative. For each give "author", "text" (verbatim) and "why" (a short phrase, e.g. "most liked", "sharpest criticism").
+14. "sov" holds whole integer percentages for Positive/Negative/Neutral across the extracted comments. They must sum to 100.
 
 Return ONLY a JSON object, no markdown fences and no commentary:
 {
+  "post": { "author": "...", "text": "...", "likes": 0, "timestamp": "..." },
   "comments": [{ "author": "...", "text": "...", "likes": 0, "timestamp": "...", "sentiment": "...", "isReply": false }],
   "summary": "...",
+  "themes": [{ "label": "...", "mentions": 0, "sentiment": "..." }],
+  "standout": [{ "author": "...", "text": "...", "why": "..." }],
   "sov": { "Positive": 0, "Negative": 0, "Neutral": 0 }
 }`;
 
@@ -143,7 +149,56 @@ function normalise(parsed) {
         sov.Neutral = Math.max(0, 100 - allocated);
     }
 
-    return { comments, summary: String(parsed?.summary ?? ""), sov };
+    const post = parsed?.post && typeof parsed.post === 'object' ? {
+        author: String(parsed.post.author ?? "Unknown"),
+        text: String(parsed.post.text ?? ""),
+        likes: parseLikes(parsed.post.likes),
+        timestamp: String(parsed.post.timestamp ?? "")
+    } : null;
+
+    // Counts are arithmetic, so derive them here rather than trusting the model
+    // to add up — same reason SOV is recomputed above.
+    const totalLikes = comments.reduce((sum, c) => sum + c.likes, 0);
+    const replies = comments.filter(c => c.isReply).length;
+    const topComment = comments.reduce((best, c) => (!best || c.likes > best.likes ? c : best), null);
+
+    const themes = (Array.isArray(parsed?.themes) ? parsed.themes : [])
+        .map(t => ({
+            label: String(t?.label ?? "").trim(),
+            mentions: Math.max(0, Math.round(Number(t?.mentions)) || 0),
+            sentiment: SENTIMENTS.find(s => s.toLowerCase() === String(t?.sentiment || "").toLowerCase()) || "Neutral"
+        }))
+        .filter(t => t.label)
+        .sort((a, b) => b.mentions - a.mentions)
+        .slice(0, 6);
+
+    const standout = (Array.isArray(parsed?.standout) ? parsed.standout : [])
+        .map(s => ({
+            author: String(s?.author ?? "Unknown"),
+            text: String(s?.text ?? ""),
+            why: String(s?.why ?? "").trim()
+        }))
+        .filter(s => s.text)
+        .slice(0, 3);
+
+    return {
+        post,
+        comments,
+        summary: String(parsed?.summary ?? ""),
+        sov,
+        themes,
+        standout,
+        stats: {
+            total: comments.length,
+            topLevel: comments.length - replies,
+            replies,
+            totalLikes,
+            avgLikes: comments.length ? Math.round(totalLikes / comments.length) : 0,
+            topComment: topComment && topComment.likes > 0
+                ? { author: topComment.author, likes: topComment.likes }
+                : null
+        }
+    };
 }
 
 // "Connection error." on its own says nothing actionable. Walk both the cause

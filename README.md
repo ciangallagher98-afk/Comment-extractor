@@ -45,5 +45,18 @@ listing its catalogue does not mean the key is entitled to any of it. Append
 
 Screenshots of a scrolling feed overlap, so the same comment appears in more than
 one image. The prompt in `api/process.js` instructs the model to merge duplicates
-and keep thread order; share-of-voice is recomputed server-side from the comments
-that survive, so the chart can never disagree with the table.
+and keep thread order.
+
+Anything the model is asked to *count* is recomputed server-side from the comments
+that survive — share of voice, totals, averages — so the charts can never disagree
+with the table.
+
+Sentiment is an ordered scale, so it renders as a diverging stacked bar (negative
+-> neutral -> positive) rather than a pie. The positive pole is blue, not green:
+green against red measures deltaE 4.1 under deuteranopia, which is indistinguishable
+for red-green colourblind readers. Every segment is labelled as well, so colour is
+never the only carrier of meaning.
+
+PDF export goes through the browser's own print pipeline (`window.print()` plus a
+print stylesheet) rather than a rendering library, so the text stays selectable
+and there is no dependency to keep current.

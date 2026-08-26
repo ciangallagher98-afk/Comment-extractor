@@ -3,292 +3,464 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Social Analytics Pro | 2026</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <title>Social Analytics Pro</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Sentiment is an ordered scale, so it uses a diverging palette: two poles
+           and a neutral midpoint. Green/red was measured at deltaE 4.1 under
+           deuteranopia — indistinguishable for red-green colourblind readers — so
+           the positive pole is blue. Every segment is labelled as well, so colour
+           is never the only carrier of meaning. */
+        :root {
+            --positive: #2563eb;
+            --neutral:  #64748b;
+            --negative: #d03b3b;
+        }
+        .swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+
+        @media print {
+            @page { margin: 14mm; }
+            .no-print { display: none !important; }
+            body { background: #fff !important; }
+            .card { break-inside: avoid; box-shadow: none !important; border-color: #d4d4d8 !important; }
+            /* Bar fills are the data — printers strip backgrounds by default. */
+            * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            .print-full { grid-column: 1 / -1 !important; }
+            table { font-size: 10px; }
+            thead { display: table-header-group; }
+            tr { break-inside: avoid; }
+        }
+    </style>
 </head>
-<body class="bg-slate-50 min-h-screen p-4 md:p-8 text-slate-900 font-sans">
-    <div class="max-w-6xl mx-auto">
-        <div class="flex flex-col md:flex-row justify-between items-center mb-8 gap-4 bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+<body class="bg-slate-50 min-h-screen text-slate-900 font-sans">
+<div class="max-w-6xl mx-auto p-4 md:p-8">
+
+    <!-- ── Header ─────────────────────────────────────────────── -->
+    <header class="card flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-6 rounded-2xl shadow-sm border border-slate-200 mb-6">
+        <div>
+            <h1 class="text-2xl font-bold tracking-tight">Social Analytics Pro</h1>
+            <p id="file-status" class="text-slate-500 text-sm mt-0.5">Upload screenshots of a comments section to begin</p>
+        </div>
+        <div class="no-print flex items-center gap-3 shrink-0">
+            <input type="file" id="upload" accept="image/*" multiple class="hidden">
+            <button id="btn-choose" class="bg-slate-100 text-slate-700 px-5 py-2.5 rounded-xl font-semibold hover:bg-slate-200 transition-colors">Choose Images</button>
+            <button id="btn-run" class="hidden bg-indigo-600 text-white px-6 py-2.5 rounded-xl font-semibold hover:bg-indigo-700 shadow-sm transition-colors disabled:opacity-60">Analyze</button>
+        </div>
+    </header>
+
+    <!-- ── Capture guide ──────────────────────────────────────── -->
+    <details id="guide" open class="no-print card bg-white rounded-2xl shadow-sm border border-slate-200 mb-6 group">
+        <summary class="cursor-pointer select-none p-5 font-semibold flex items-center gap-2 list-none">
+            <span class="text-indigo-600 transition-transform group-open:rotate-90">▶</span>
+            How to capture a full comments section
+        </summary>
+        <div class="px-5 pb-6 pt-0 grid md:grid-cols-2 gap-6 text-sm">
             <div>
-                <h1 class="text-2xl font-bold text-slate-800 tracking-tight text-center md:text-left">Social Analytics Pro</h1>
-                <p id="file-status" class="text-slate-500 text-sm text-center md:text-left">Upload screenshots for deep analysis</p>
+                <h3 class="text-[10px] uppercase tracking-widest text-slate-400 font-black mb-3">1 · Expand everything first</h3>
+                <p class="text-slate-500 mb-3">Anything still collapsed is invisible to the analysis. Before capturing:</p>
+                <ul class="space-y-2 text-slate-700">
+                    <li class="flex gap-2"><span class="text-indigo-500 font-bold">·</span><span>Keep clicking <strong>“View more comments”</strong> until nothing more loads.</span></li>
+                    <li class="flex gap-2"><span class="text-indigo-500 font-bold">·</span><span>Open <strong>“View N replies”</strong> on every thread — replies are counted separately.</span></li>
+                    <li class="flex gap-2"><span class="text-indigo-500 font-bold">·</span><span>Click <strong>“See more”</strong> on truncated long comments, or they’ll be cut off mid-sentence.</span></li>
+                    <li class="flex gap-2"><span class="text-indigo-500 font-bold">·</span><span>Make sure <strong>the post itself is visible</strong> at the top — that’s where the post text is read from.</span></li>
+                </ul>
             </div>
-            <div class="flex items-center gap-3">
-                <input type="file" id="upload" accept="image/*" multiple class="hidden" onchange="handleFileSelect()">
-                <button onclick="document.getElementById('upload').click()" class="bg-slate-100 text-slate-700 px-5 py-2.5 rounded-xl font-semibold hover:bg-slate-200 transition-all">Choose Images</button>
-                <button onclick="startAnalysis()" id="btn-run" class="hidden bg-indigo-600 text-white px-6 py-2.5 rounded-xl font-semibold hover:bg-indigo-700 shadow-lg shadow-indigo-100 transition-all">Analyze Now</button>
+            <div>
+                <h3 class="text-[10px] uppercase tracking-widest text-slate-400 font-black mb-3">2 · Capture the scrollable area</h3>
+                <p class="text-slate-500 mb-3">A normal screenshot only grabs what’s on screen. Use a scrolling-capture extension:</p>
+                <a href="https://chromewebstore.google.com/search/full%20page%20screen%20capture" target="_blank" rel="noopener"
+                   class="inline-flex items-center gap-2 bg-indigo-50 text-indigo-700 px-4 py-2.5 rounded-xl font-semibold hover:bg-indigo-100 transition-colors mb-3">
+                    Get a full-page screenshot extension ↗
+                </a>
+                <p class="text-slate-500 text-xs mb-3">GoFullPage, Awesome Screenshot and Fireshot all work — any of them captures the whole scrollable region in one image.</p>
+                <ul class="space-y-2 text-slate-700">
+                    <li class="flex gap-2"><span class="text-indigo-500 font-bold">·</span><span>Very long threads: take <strong>several overlapping captures</strong> and upload them in order. Repeats at the seams are merged automatically.</span></li>
+                    <li class="flex gap-2"><span class="text-indigo-500 font-bold">·</span><span>Up to <strong>8 images</strong> per run. Images are shrunk in your browser before upload.</span></li>
+                </ul>
             </div>
         </div>
+    </details>
 
-        <div id="top-row" class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8 hidden">
-            <div class="md:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-                <h3 class="text-[10px] uppercase tracking-widest text-slate-400 font-black mb-4 italic">Conversation Summary</h3>
-                <p id="summary-text" class="text-slate-700 leading-relaxed text-sm">Analyzing themes...</p>
+    <!-- ── Dropzone ───────────────────────────────────────────── -->
+    <div id="dropzone" class="no-print border-2 border-dashed border-slate-300 rounded-2xl p-10 text-center text-slate-400 mb-6 transition-colors">
+        <p class="font-semibold text-slate-500">Drop screenshots here</p>
+        <p class="text-xs mt-1">or use “Choose Images” above · PNG or JPG · max 8</p>
+    </div>
+
+    <!-- ── Results ────────────────────────────────────────────── -->
+    <main id="results" class="hidden space-y-6">
+
+        <section id="post-card" class="card hidden bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+            <h2 class="text-[10px] uppercase tracking-widest text-slate-400 font-black mb-3">Original Post</h2>
+            <div class="flex items-baseline gap-2 mb-2">
+                <span id="post-author" class="font-bold text-slate-800"></span>
+                <span id="post-meta" class="text-xs text-slate-400"></span>
             </div>
-            <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col items-center">
-                <h3 class="text-[10px] uppercase tracking-widest text-slate-400 font-black mb-4 italic text-center">Sentiment Share of Voice (SOV)</h3>
-                <div class="w-full max-w-[150px] relative">
-                    <canvas id="sovChart"></canvas>
-                </div>
-                <div id="stat-sov" class="mt-4 flex gap-4 text-[10px] font-bold"></div>
-            </div>
+            <p id="post-text" class="text-slate-700 leading-relaxed whitespace-pre-wrap"></p>
+        </section>
+
+        <section id="stats" class="grid grid-cols-2 md:grid-cols-4 gap-4"></section>
+
+        <div class="grid md:grid-cols-5 gap-6">
+            <section class="card md:col-span-3 bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                <h2 class="text-[10px] uppercase tracking-widest text-slate-400 font-black mb-3">Conversation Summary</h2>
+                <p id="summary-text" class="text-slate-700 leading-relaxed text-sm"></p>
+            </section>
+            <section class="card md:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                <h2 class="text-[10px] uppercase tracking-widest text-slate-400 font-black mb-4">Sentiment Share of Voice</h2>
+                <div id="sov-bar" class="flex gap-[2px] h-9 mb-4"></div>
+                <div id="sov-legend" class="space-y-1.5 text-xs"></div>
+            </section>
         </div>
 
-        <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-            <div class="p-6 border-b border-slate-100 flex flex-col md:flex-row justify-between items-center gap-4">
-                <h3 class="font-bold text-slate-800">Extracted Comments</h3>
-                <div id="export-actions" class="hidden flex items-center gap-3">
-                    <button onclick="downloadCSV(false)" class="text-indigo-600 text-[10px] font-black hover:bg-indigo-50 px-3 py-2 rounded-lg border border-indigo-100 transition-all">📥 BASIC CSV</button>
-                    <button onclick="downloadCSV(true)" class="bg-indigo-600 text-white text-[10px] font-black px-4 py-2 rounded-lg hover:bg-indigo-700 shadow-sm transition-all tracking-widest">📊 SENTIMENT REPORT</button>
+        <section id="themes-card" class="card hidden bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+            <h2 class="text-[10px] uppercase tracking-widest text-slate-400 font-black mb-4">Recurring Themes</h2>
+            <div id="themes" class="space-y-3"></div>
+        </section>
+
+        <section id="standout-card" class="card hidden bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+            <h2 class="text-[10px] uppercase tracking-widest text-slate-400 font-black mb-4">Standout Comments</h2>
+            <div id="standout" class="grid md:grid-cols-3 gap-4"></div>
+        </section>
+
+        <section class="card bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+            <div class="p-6 border-b border-slate-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                <h2 class="font-bold">Extracted Comments</h2>
+                <div class="no-print flex flex-wrap items-center gap-2">
+                    <button onclick="downloadCSV(false)" class="text-indigo-600 text-[10px] font-black hover:bg-indigo-50 px-3 py-2 rounded-lg border border-indigo-100 transition-colors">BASIC CSV</button>
+                    <button onclick="downloadCSV(true)" class="text-indigo-600 text-[10px] font-black hover:bg-indigo-50 px-3 py-2 rounded-lg border border-indigo-100 transition-colors">SENTIMENT CSV</button>
+                    <button onclick="window.print()" class="bg-indigo-600 text-white text-[10px] font-black px-4 py-2 rounded-lg hover:bg-indigo-700 transition-colors">SAVE AS PDF</button>
                 </div>
             </div>
             <div class="overflow-x-auto">
                 <table class="w-full text-left border-collapse">
-                    <thead class="bg-slate-50/50">
+                    <thead class="bg-slate-50/70">
                         <tr>
                             <th class="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">PublishedAt</th>
                             <th class="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Screen Name</th>
-                            <th class="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest w-1/3">Content</th>
+                            <th class="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest w-2/5">Content</th>
                             <th class="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Likes</th>
                             <th class="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Sentiment</th>
                         </tr>
                     </thead>
-                    <tbody id="table-body" class="divide-y divide-slate-100">
-                        <tr><td colspan="5" class="p-12 text-center text-slate-300 italic text-sm">Upload images to begin processing.</td></tr>
-                    </tbody>
+                    <tbody id="table-body" class="divide-y divide-slate-100"></tbody>
                 </table>
             </div>
-        </div>
-    </div>
+        </section>
+    </main>
 
-    <script>
-        const MAX_IMAGES = 8;          // keep in sync with api/process.js
-        const MAX_WIDTH = 1080;        // screenshots stay legible; payload stays small
-        const MAX_HEIGHT = 4096;
-        const JPEG_QUALITY = 0.75;
-        const MAX_PAYLOAD_BYTES = 4_000_000;
+    <div id="message" class="hidden card bg-white p-10 rounded-2xl shadow-sm border border-slate-200 text-center"></div>
+</div>
 
-        let currentData = [];
-        let summaryData = "";
-        let sovData = {};
-        let analysisTime = null;
-        let myChart = null;
+<script>
+    const MAX_IMAGES = 8;          // keep in sync with api/process.js
+    const MAX_WIDTH = 1080;        // screenshots stay legible; payload stays small
+    const MAX_HEIGHT = 4096;
+    const JPEG_QUALITY = 0.75;
+    const MAX_PAYLOAD_BYTES = 4_000_000;
 
-        function esc(value) {
-            return String(value ?? '').replace(/[&<>"']/g, c => (
-                { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
-            ));
+    const COLOR = { Positive: 'var(--positive)', Neutral: 'var(--neutral)', Negative: 'var(--negative)' };
+    const CHIP = {
+        Positive: 'bg-blue-50 text-blue-700 border-blue-100',
+        Negative: 'bg-red-50 text-red-700 border-red-100',
+        Neutral:  'bg-slate-50 text-slate-500 border-slate-200'
+    };
+
+    let currentData = [];
+    let analysisTime = null;
+    let selectedFiles = [];
+
+    const $ = id => document.getElementById(id);
+    const esc = v => String(v ?? '').replace(/[&<>"']/g, c => (
+        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ));
+    const num = n => Number(n || 0).toLocaleString();
+
+    // ── File selection ──────────────────────────────────────────
+    $('btn-choose').onclick = () => $('upload').click();
+    $('upload').onchange = e => setFiles(Array.from(e.target.files));
+    $('btn-run').onclick = startAnalysis;
+
+    const dz = $('dropzone');
+    ['dragenter', 'dragover'].forEach(ev => dz.addEventListener(ev, e => {
+        e.preventDefault();
+        dz.classList.add('border-indigo-400', 'bg-indigo-50/40');
+    }));
+    ['dragleave', 'drop'].forEach(ev => dz.addEventListener(ev, e => {
+        e.preventDefault();
+        dz.classList.remove('border-indigo-400', 'bg-indigo-50/40');
+    }));
+    dz.addEventListener('drop', e => {
+        setFiles(Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/')));
+    });
+
+    function setFiles(files) {
+        selectedFiles = files;
+        if (!files.length) return;
+        if (files.length > MAX_IMAGES) {
+            $('btn-run').classList.add('hidden');
+            $('file-status').textContent = `${files.length} files selected — maximum is ${MAX_IMAGES} per run.`;
+            return;
         }
+        $('btn-run').classList.remove('hidden');
+        $('dropzone').classList.remove('hidden');
+        $('file-status').textContent = `${files.length} image${files.length > 1 ? 's' : ''} ready.`;
+    }
 
-        function handleFileSelect() {
-            const files = document.getElementById('upload').files;
-            const btn = document.getElementById('btn-run');
-            const status = document.getElementById('file-status');
-            if (files.length === 0) return;
+    // Full-resolution screenshots exceed Vercel's ~4.5MB request body cap, so
+    // shrink them in the browser before they ever hit the network.
+    function downscale(file) {
+        return new Promise((resolve, reject) => {
+            const url = URL.createObjectURL(file);
+            const img = new Image();
+            img.onload = () => {
+                URL.revokeObjectURL(url);
+                const scale = Math.min(1, MAX_WIDTH / img.width, MAX_HEIGHT / img.height);
+                const canvas = document.createElement('canvas');
+                canvas.width = Math.max(1, Math.round(img.width * scale));
+                canvas.height = Math.max(1, Math.round(img.height * scale));
+                const ctx = canvas.getContext('2d');
+                ctx.imageSmoothingQuality = 'high';
+                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                resolve(canvas.toDataURL('image/jpeg', JPEG_QUALITY));
+            };
+            img.onerror = () => { URL.revokeObjectURL(url); reject(new Error(`Could not read ${file.name}`)); };
+            img.src = url;
+        });
+    }
 
-            if (files.length > MAX_IMAGES) {
-                btn.classList.add('hidden');
-                status.innerText = `${files.length} files selected — maximum is ${MAX_IMAGES} per run.`;
+    function convertToISO(relative) {
+        const date = new Date(analysisTime || new Date());
+        const r = String(relative ?? '').trim().toLowerCase();
+
+        // Match the number and its unit together. "mo" is tested before the
+        // single letters so "5mo" reads as months, not minutes.
+        const match = r.match(/(\d+)\s*(mo|[smhdwy])/);
+        if (!match) return date.toISOString();
+
+        const val = parseInt(match[1], 10);
+        switch (match[2]) {
+            case 's': date.setSeconds(date.getSeconds() - val); break;
+            case 'm': date.setMinutes(date.getMinutes() - val); break;
+            case 'h': date.setHours(date.getHours() - val); break;
+            case 'd': date.setDate(date.getDate() - val); break;
+            case 'w': date.setDate(date.getDate() - val * 7); break;
+            case 'mo': date.setMonth(date.getMonth() - val); break;
+            case 'y': date.setFullYear(date.getFullYear() - val); break;
+        }
+        return date.toISOString();
+    }
+
+    function showMessage(html, tone = 'text-slate-400') {
+        $('message').className = `card bg-white p-10 rounded-2xl shadow-sm border border-slate-200 text-center ${tone}`;
+        $('message').innerHTML = html;
+    }
+
+    async function startAnalysis() {
+        const btn = $('btn-run');
+        analysisTime = new Date();
+        btn.disabled = true;
+        $('results').classList.add('hidden');
+
+        try {
+            const images = [];
+            for (let i = 0; i < selectedFiles.length; i++) {
+                btn.textContent = `Preparing ${i + 1}/${selectedFiles.length}`;
+                showMessage(`<p class="font-semibold text-indigo-500 animate-pulse">Preparing image ${i + 1} of ${selectedFiles.length}…</p>`);
+                images.push(await downscale(selectedFiles[i]));
+            }
+
+            if (images.reduce((sum, img) => sum + img.length, 0) > MAX_PAYLOAD_BYTES) {
+                throw new Error('Screenshots are too large even after compression. Try fewer per run.');
+            }
+
+            btn.textContent = 'Reading…';
+            showMessage('<p class="font-semibold text-indigo-500 animate-pulse">Reading screenshots — this takes a few seconds…</p>');
+
+            const response = await fetch('/api/process', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ images })
+            });
+            const result = await response.json().catch(() => ({ error: `Server returned ${response.status}` }));
+            if (!response.ok || result.error) throw new Error(result.error || `Server returned ${response.status}`);
+
+            currentData = Array.isArray(result.comments) ? result.comments : [];
+            if (!currentData.length) {
+                showMessage('<p class="italic">No comments found in these screenshots. Check that the comments section was expanded before capturing.</p>');
                 return;
             }
-            btn.classList.remove('hidden');
-            status.innerText = `${files.length} file(s) ready.`;
+            render(result);
+
+        } catch (err) {
+            showMessage(`<p class="font-semibold text-red-600">${esc(err.message)}</p>`, '');
+        } finally {
+            btn.disabled = false;
+            btn.textContent = 'Analyze';
         }
+    }
 
-        // Full-resolution screenshots blow past Vercel's ~4.5MB request body cap,
-        // so shrink them in the browser before they ever hit the network.
-        function downscale(file) {
-            return new Promise((resolve, reject) => {
-                const url = URL.createObjectURL(file);
-                const img = new Image();
-                img.onload = () => {
-                    URL.revokeObjectURL(url);
-                    const scale = Math.min(1, MAX_WIDTH / img.width, MAX_HEIGHT / img.height);
-                    const canvas = document.createElement('canvas');
-                    canvas.width = Math.max(1, Math.round(img.width * scale));
-                    canvas.height = Math.max(1, Math.round(img.height * scale));
-                    const ctx = canvas.getContext('2d');
-                    ctx.imageSmoothingQuality = 'high';
-                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-                    resolve(canvas.toDataURL('image/jpeg', JPEG_QUALITY));
-                };
-                img.onerror = () => {
-                    URL.revokeObjectURL(url);
-                    reject(new Error(`Could not read ${file.name}`));
-                };
-                img.src = url;
-            });
-        }
+    function render(result) {
+        $('message').classList.add('hidden');
+        $('results').classList.remove('hidden');
+        $('guide').open = false;
+        $('dropzone').classList.add('hidden');
 
-        function convertToISO(relative) {
-            const now = analysisTime || new Date();
-            const date = new Date(now);
-            const r = String(relative ?? '').trim().toLowerCase();
+        const when = (analysisTime || new Date()).toLocaleString(undefined,
+            { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+        const n = currentData.length;
+        $('file-status').textContent =
+            `${n} comment${n === 1 ? '' : 's'} from ${selectedFiles.length || 'uploaded'} screenshot${selectedFiles.length === 1 ? '' : 's'} · ${when}`;
 
-            // Match the number and its unit together. "mo" is tested before the
-            // single letters so "5mo" reads as months, not minutes.
-            const match = r.match(/(\d+)\s*(mo|[smhdwy])/);
-            if (!match) return date.toISOString();
+        renderPost(result.post);
+        renderStats(result.stats || {});
+        $('summary-text').textContent = result.summary || '';
+        renderSOV(result.sov || {});
+        renderThemes(result.themes || []);
+        renderStandout(result.standout || []);
+        renderTable();
+    }
 
-            const val = parseInt(match[1], 10);
-            switch (match[2]) {
-                case 's': date.setSeconds(date.getSeconds() - val); break;
-                case 'm': date.setMinutes(date.getMinutes() - val); break;
-                case 'h': date.setHours(date.getHours() - val); break;
-                case 'd': date.setDate(date.getDate() - val); break;
-                case 'w': date.setDate(date.getDate() - val * 7); break;
-                case 'mo': date.setMonth(date.getMonth() - val); break;
-                case 'y': date.setFullYear(date.getFullYear() - val); break;
-            }
-            return date.toISOString();
-        }
+    function renderPost(post) {
+        const card = $('post-card');
+        if (!post || !post.text) { card.classList.add('hidden'); return; }
+        card.classList.remove('hidden');
+        $('post-author').textContent = post.author || 'Unknown';
+        const bits = [];
+        if (post.timestamp) bits.push(post.timestamp);
+        if (post.likes) bits.push(`${num(post.likes)} likes`);
+        $('post-meta').textContent = bits.join(' · ');
+        $('post-text').textContent = post.text;
+    }
 
-        async function startAnalysis() {
-            const files = Array.from(document.getElementById('upload').files);
-            const btn = document.getElementById('btn-run');
-            const tbody = document.getElementById('table-body');
+    // A single number is best read as a number, not plotted.
+    function renderStats(stats) {
+        const tiles = [
+            ['Comments', num(stats.total)],
+            ['Replies', num(stats.replies)],
+            ['Total Likes', num(stats.totalLikes)],
+            ['Avg Likes', num(stats.avgLikes)]
+        ];
+        $('stats').innerHTML = tiles.map(([label, value]) => `
+            <div class="card bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+                <div class="text-[10px] uppercase tracking-widest text-slate-400 font-black mb-1">${label}</div>
+                <div class="text-2xl font-bold text-slate-800">${value}</div>
+            </div>
+        `).join('');
+    }
 
-            analysisTime = new Date();
-            btn.disabled = true;
-            tbody.innerHTML = `<tr><td colspan="5" class="p-12 text-center text-indigo-500 font-bold animate-pulse">PREPARING IMAGES...</td></tr>`;
+    // Sentiment is an ordered scale, so it reads as a diverging stacked bar
+    // running negative -> neutral -> positive, not as a pie. Segments carry a
+    // 2px gap and every one is labelled with its share and count.
+    function renderSOV(sov) {
+        const order = ['Negative', 'Neutral', 'Positive'];
+        const counts = { Positive: 0, Negative: 0, Neutral: 0 };
+        currentData.filter(c => c.text !== '[Image/GIF Only]').forEach(c => { counts[c.sentiment] += 1; });
 
-            try {
-                const images = [];
-                for (let i = 0; i < files.length; i++) {
-                    btn.innerText = `PREPARING ${i + 1}/${files.length}`;
-                    images.push(await downscale(files[i]));
-                }
+        $('sov-bar').innerHTML = order.map((key, i) => {
+            const pct = Number(sov[key]) || 0;
+            if (!pct) return '';
+            const round = i === 0 ? 'border-radius:4px 0 0 4px'
+                : i === order.length - 1 ? 'border-radius:0 4px 4px 0' : '';
+            return `<div style="width:${pct}%;background:${COLOR[key]};${round}" title="${key} ${pct}%"></div>`;
+        }).join('');
 
-                const bytes = images.reduce((sum, img) => sum + img.length, 0);
-                if (bytes > MAX_PAYLOAD_BYTES) {
-                    throw new Error('Screenshots are too large even after compression. Try fewer per run.');
-                }
+        $('sov-legend').innerHTML = order.map(key => `
+            <div class="flex items-center justify-between">
+                <span class="flex items-center gap-2 text-slate-600">
+                    <span class="swatch" style="background:${COLOR[key]}"></span>${key}
+                </span>
+                <span class="font-bold text-slate-800 tabular-nums">${Number(sov[key]) || 0}%
+                    <span class="font-normal text-slate-400">(${counts[key]})</span>
+                </span>
+            </div>
+        `).join('');
+    }
 
-                btn.innerText = "READING SCREENSHOTS...";
-                tbody.innerHTML = `<tr><td colspan="5" class="p-12 text-center text-indigo-500 font-bold animate-pulse">READING SCREENSHOTS...</td></tr>`;
+    function renderThemes(themes) {
+        const card = $('themes-card');
+        if (!themes.length) { card.classList.add('hidden'); return; }
+        card.classList.remove('hidden');
 
-                const response = await fetch('/api/process', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ images })
-                });
+        const max = Math.max(...themes.map(t => t.mentions), 1);
+        $('themes').innerHTML = themes.map(t => `
+            <div>
+                <div class="flex items-baseline justify-between mb-1.5 text-sm">
+                    <span class="font-semibold text-slate-700">${esc(t.label)}</span>
+                    <span class="text-slate-400 text-xs">${t.mentions} mention${t.mentions === 1 ? '' : 's'} ·
+                        <span class="font-semibold" style="color:${COLOR[t.sentiment]}">${esc(t.sentiment)}</span>
+                    </span>
+                </div>
+                <div class="h-2 rounded-[4px]" style="width:${Math.max(3, (t.mentions / max) * 100)}%;background:${COLOR[t.sentiment]}"></div>
+            </div>
+        `).join('');
+    }
 
-                const result = await response.json().catch(() => ({ error: `Server returned ${response.status}` }));
-                if (!response.ok || result.error) throw new Error(result.error || `Server returned ${response.status}`);
+    function renderStandout(standout) {
+        const card = $('standout-card');
+        if (!standout.length) { card.classList.add('hidden'); return; }
+        card.classList.remove('hidden');
+        $('standout').innerHTML = standout.map(s => `
+            <figure class="border border-slate-200 rounded-xl p-4">
+                <figcaption class="text-[10px] uppercase tracking-widest text-slate-400 font-black mb-2">${esc(s.why || 'Notable')}</figcaption>
+                <blockquote class="text-sm text-slate-700 leading-relaxed mb-2">“${esc(s.text)}”</blockquote>
+                <div class="text-xs text-slate-400 font-semibold">${esc(s.author)}</div>
+            </figure>
+        `).join('');
+    }
 
-                currentData = Array.isArray(result.comments) ? result.comments : [];
-                summaryData = result.summary || "";
-                sovData = result.sov || {};
-
-                if (currentData.length === 0) {
-                    tbody.innerHTML = `<tr><td colspan="5" class="p-12 text-center text-slate-400 italic text-sm">No comments found in these screenshots.</td></tr>`;
-                    return;
-                }
-                renderDashboard();
-
-            } catch (err) {
-                tbody.innerHTML = `<tr><td colspan="5" class="p-12 text-center text-red-500">Failed: ${esc(err.message)}</td></tr>`;
-            } finally {
-                btn.disabled = false;
-                btn.innerText = "Analyze Now";
-            }
-        }
-
-        function renderDashboard() {
-            document.getElementById('top-row').classList.remove('hidden');
-            document.getElementById('export-actions').classList.remove('hidden');
-            document.getElementById('summary-text').innerText = summaryData;
-
-            const tbody = document.getElementById('table-body');
-            tbody.innerHTML = currentData.map(c => {
-                const isImg = c.text === "[Image/GIF Only]";
-                return `
-                    <tr class="hover:bg-slate-50 transition-colors ${isImg ? 'opacity-40' : ''}">
-                        <td class="p-4 font-mono text-[9px] text-slate-400">${esc(convertToISO(c.timestamp))}</td>
-                        <td class="p-4 font-bold text-slate-700 text-xs uppercase">${c.isReply ? '<span class="text-slate-300 mr-1">↳</span>' : ''}${esc(c.author)}</td>
-                        <td class="p-4 text-xs ${isImg ? 'italic' : 'text-slate-600'}">${esc(c.text)}</td>
-                        <td class="p-4 font-black text-slate-800 text-xs text-center">${esc(c.likes)}</td>
-                        <td class="p-4 text-right">
-                            <span class="px-2 py-1 rounded text-[9px] font-black uppercase ${getStyle(c.sentiment)}">
-                                ${esc(c.sentiment || 'Neutral')}
-                            </span>
-                        </td>
-                    </tr>
-                `;
-            }).join('');
-
-            const pos = sovData.Positive || 0;
-            const neg = sovData.Negative || 0;
-            const neu = sovData.Neutral || 0;
-
-            document.getElementById('stat-sov').innerHTML = `
-                <span class="text-emerald-500">POS ${esc(pos)}%</span>
-                <span class="text-rose-500">NEG ${esc(neg)}%</span>
-                <span class="text-slate-400">NEU ${esc(neu)}%</span>
+    function renderTable() {
+        $('table-body').innerHTML = currentData.map(c => {
+            const isImg = c.text === '[Image/GIF Only]';
+            return `
+                <tr class="${isImg ? 'opacity-50' : ''}">
+                    <td class="p-4 font-mono text-[9px] text-slate-400 align-top">${esc(convertToISO(c.timestamp))}</td>
+                    <td class="p-4 font-bold text-slate-700 text-xs align-top">${c.isReply ? '<span class="text-slate-300 mr-1">↳</span>' : ''}${esc(c.author)}</td>
+                    <td class="p-4 text-xs align-top ${isImg ? 'italic text-slate-400' : 'text-slate-600'}">${esc(c.text)}</td>
+                    <td class="p-4 font-bold text-slate-800 text-xs text-center align-top tabular-nums">${num(c.likes)}</td>
+                    <td class="p-4 text-right align-top">
+                        <span class="px-2 py-1 rounded border text-[9px] font-black uppercase ${CHIP[c.sentiment] || CHIP.Neutral}">${esc(c.sentiment)}</span>
+                    </td>
+                </tr>
             `;
+        }).join('');
+    }
 
-            updateChart(pos, neg, neu);
-        }
+    // ── CSV export (fields and UUID unchanged) ──────────────────
+    // A leading =, +, - or @ makes Excel and Sheets treat the cell as a
+    // formula, so prefix those with a quote before quoting the field.
+    function csvCell(value) {
+        let s = String(value ?? '');
+        if (/^[=+\-@]/.test(s)) s = `'${s}`;
+        return `"${s.replace(/"/g, '""')}"`;
+    }
 
-        function updateChart(pos, neg, neu) {
-            const ctx = document.getElementById('sovChart').getContext('2d');
-            if (myChart) myChart.destroy();
-            myChart = new Chart(ctx, {
-                type: 'doughnut',
-                data: {
-                    labels: ['Pos', 'Neg', 'Neu'],
-                    datasets: [{
-                        data: [pos, neg, neu],
-                        backgroundColor: ['#10b981', '#f43f5e', '#94a3b8'],
-                        borderWidth: 0,
-                        hoverOffset: 4
-                    }]
-                },
-                options: { plugins: { legend: { display: false } }, cutout: '75%' }
-            });
-        }
+    function downloadCSV(withSent) {
+        const cleanData = currentData.filter(c => c.text !== '[Image/GIF Only]');
+        let head = "UUID,PublishedAt,Screen Name,Content,Likes";
+        if (withSent) head += ",Sentiment";
 
-        function getStyle(s) {
-            if (s === 'Positive') return 'bg-emerald-50 text-emerald-600';
-            if (s === 'Negative') return 'bg-rose-50 text-rose-600';
-            return 'bg-slate-50 text-slate-400 border border-slate-100';
-        }
+        const rows = [head];
+        cleanData.forEach(c => {
+            const row = [
+                crypto.randomUUID(),
+                convertToISO(c.timestamp),
+                csvCell(c.author),
+                csvCell(c.text),
+                Number(c.likes) || 0
+            ];
+            if (withSent) row.push(c.sentiment);
+            rows.push(row.join(","));
+        });
 
-        // A leading =, +, - or @ makes Excel and Sheets treat the cell as a
-        // formula, so prefix those with a quote before quoting the field.
-        function csvCell(value) {
-            let s = String(value ?? '');
-            if (/^[=+\-@]/.test(s)) s = `'${s}`;
-            return `"${s.replace(/"/g, '""')}"`;
-        }
-
-        function downloadCSV(withSent) {
-            const cleanData = currentData.filter(c => c.text !== "[Image/GIF Only]");
-            let head = "UUID,PublishedAt,Screen Name,Content,Likes";
-            if (withSent) head += ",Sentiment";
-
-            const rows = [head];
-            cleanData.forEach(c => {
-                const row = [
-                    crypto.randomUUID(),
-                    convertToISO(c.timestamp),
-                    csvCell(c.author),
-                    csvCell(c.text),
-                    Number(c.likes) || 0
-                ];
-                if (withSent) row.push(c.sentiment);
-                rows.push(row.join(","));
-            });
-
-            const blob = new Blob([rows.join("\n")], { type: 'text/csv' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `report_${withSent ? 'full' : 'basic'}.csv`;
-            a.click();
-            URL.revokeObjectURL(url);
-        }
-    </script>
+        const blob = new Blob([rows.join("\n")], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `report_${withSent ? 'full' : 'basic'}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+    }
+</script>
 </body>
 </html>
