@@ -1,21 +1,43 @@
-import OpenAI from "openai";
-
 const BASE_URL = process.env.DASHSCOPE_BASE_URL || "https://dashscope-intl.aliyuncs.com/compatible-mode/v1";
 const MODEL = process.env.VISION_MODEL || "qwen3-vl-plus";
 
 // Reading several screenshots takes well over the 10s default Vercel allows.
 export const maxDuration = 60;
 
-// QwenCloud / DashScope exposes an OpenAI-compatible endpoint, so the standard
-// openai client works unchanged apart from the baseURL. Retries are capped at 1
-// because a retry re-uploads the whole multi-megabyte image payload; the default
-// of 2 turns one slow failure into three and can outlast the function itself.
-const client = new OpenAI({
-    apiKey: process.env.DASHSCOPE_API_KEY,
-    baseURL: BASE_URL,
-    timeout: 50_000,
-    maxRetries: 1
-});
+// The openai SDK raised APIConnectionError against this endpoint while a plain
+// fetch to the identical URL returned a clean JSON response, so the SDK is not
+// used here. One POST is all this needs, which also leaves the project with no
+// runtime dependencies.
+async function callChat(payload) {
+    const response = await fetch(`${BASE_URL}/chat/completions`, {
+        method: "POST",
+        headers: {
+            "Authorization": `Bearer ${process.env.DASHSCOPE_API_KEY}`,
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(50_000)
+    });
+
+    const text = await response.text();
+
+    if (!response.ok) {
+        // Surface the provider's own wording — "AccessDenied.Unpurchased" says
+        // far more than a bare status code.
+        let message = text.slice(0, 300);
+        try {
+            const body = JSON.parse(text);
+            message = body?.error?.message || body?.message || message;
+        } catch {
+            // non-JSON body; the raw slice is the best we have
+        }
+        const error = new Error(message);
+        error.status = response.status;
+        throw error;
+    }
+
+    return JSON.parse(text);
+}
 const MAX_IMAGES = 8;
 const MAX_PAYLOAD_BYTES = 4_000_000; // Vercel caps serverless request bodies around 4.5MB.
 
@@ -186,18 +208,36 @@ async function diagnose(res) {
         }, true)
     ]);
 
+    // Ids are short; the raw body is not. Return the parsed list so the whole
+    // catalogue is visible rather than the first 600 characters of it.
+    let available = null;
+    if (models.reached && models.status === 200) {
+        try {
+            available = JSON.parse(models.body)?.data?.map(m => m.id).filter(Boolean) ?? null;
+        } catch {
+            // leave the raw body in place
+        }
+    }
+    if (available) {
+        delete models.body;
+        models.count = available.length;
+        models.visionCandidates = available.filter(id => /vl|vision|omni|multimodal/i.test(id));
+    }
+
     try {
-        const sdk = await client.chat.completions.create({
+        const reply = await callChat({
             model: MODEL,
             max_tokens: 8,
             messages: [{ role: "user", content: "Reply with the word OK." }]
         });
-        return res.status(200).json({ ...config, ok: true, control, models, direct, reply: sdk.choices?.[0]?.message?.content ?? "" });
+        return res.status(200).json({
+            ...config, ok: true, control, models, available, direct,
+            reply: reply.choices?.[0]?.message?.content ?? ""
+        });
     } catch (error) {
         return res.status(200).json({
-            ...config, ok: false, control, models, direct,
+            ...config, ok: false, control, models, available, direct,
             status: error?.status ?? null,
-            errorType: error?.constructor?.name ?? null,
             error: describeError(error)
         });
     }
@@ -244,15 +284,12 @@ export default async function handler(req, res) {
 
         let completion;
         try {
-            completion = await client.chat.completions.create({
-                ...request,
-                response_format: { type: "json_object" }
-            });
+            completion = await callChat({ ...request, response_format: { type: "json_object" } });
         } catch (err) {
             // Not every vision model on DashScope accepts response_format; the
             // prompt plus tolerant parsing covers us when it doesn't.
             if (!/response_format/i.test(err?.message || "")) throw err;
-            completion = await client.chat.completions.create(request);
+            completion = await callChat(request);
         }
 
         res.status(200).json(normalise(parseJSON(completion.choices?.[0]?.message?.content)));
