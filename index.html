@@ -75,7 +75,7 @@
                 <ul class="space-y-2 text-slate-700">
                     <li class="flex gap-2"><span class="text-indigo-500 font-bold">·</span><span>Point it at the <strong>comments container</strong>, not the whole window — that’s the part that scrolls independently.</span></li>
                     <li class="flex gap-2"><span class="text-indigo-500 font-bold">·</span><span>One capture is usually enough. For very long threads, take <strong>several overlapping captures</strong> and upload them in order — repeats at the seams are merged automatically.</span></li>
-                    <li class="flex gap-2"><span class="text-indigo-500 font-bold">·</span><span>Up to <strong>8 images</strong> per run. Images are shrunk in your browser before upload.</span></li>
+                    <li class="flex gap-2"><span class="text-indigo-500 font-bold">·</span><span>Up to <strong>6 images</strong> per run. Images are shrunk in your browser before upload.</span></li>
                 </ul>
             </div>
         </div>
@@ -84,7 +84,7 @@
     <!-- ── Dropzone ───────────────────────────────────────────── -->
     <div id="dropzone" class="no-print border-2 border-dashed border-slate-300 rounded-2xl p-10 text-center text-slate-400 mb-6 transition-colors">
         <p class="font-semibold text-slate-500">Drop screenshots here</p>
-        <p class="text-xs mt-1">or use “Choose Images” above · PNG or JPG · max 8</p>
+        <p class="text-xs mt-1">or use “Choose Images” above · PNG or JPG · max 6</p>
     </div>
 
     <!-- ── Results ────────────────────────────────────────────── -->
@@ -160,7 +160,7 @@
 </div>
 
 <script>
-    const MAX_IMAGES = 8;          // keep in sync with api/process.js
+    const MAX_IMAGES = 6;          // keep in sync with api/process.js
     const MAX_WIDTH = 1080;        // screenshots stay legible; payload stays small
     const MAX_HEIGHT = 4096;
     const JPEG_QUALITY = 0.75;

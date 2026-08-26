@@ -77,7 +77,7 @@ async function callChat(payload, budgetMs = 50_000) {
         }
     }
 }
-const MAX_IMAGES = 8;
+const MAX_IMAGES = 6;
 const MAX_PAYLOAD_BYTES = 4_000_000; // Vercel caps serverless request bodies around 4.5MB.
 
 const INSTRUCTIONS = `You are reading screenshots of a social media post and its comments section. Extract the post and every comment you can actually see.
@@ -447,7 +447,7 @@ export default async function handler(req, res) {
         const request = {
             model: MODEL,
             temperature: 0.1,
-            max_tokens: 32000,
+            max_tokens: 16000,
             messages: [{
                 role: "user",
                 content: [
@@ -457,15 +457,26 @@ export default async function handler(req, res) {
             }]
         };
 
+        // Gemini 2.5 spends output tokens and wall-clock time reasoning before it
+        // writes anything, which is wasted on faithful transcription and was
+        // pushing runs past the timeout — so ask for none. Providers that reject
+        // either option answer 400, and each rung drops one and retries; a 400
+        // comes back fast, so the ladder costs little.
+        const OPTION_LADDER = [
+            { response_format: { type: "json_object" }, reasoning_effort: "none" },
+            { response_format: { type: "json_object" } },
+            {}
+        ];
+
         let completion;
-        try {
-            completion = await callChat({ ...request, response_format: { type: "json_object" } });
-        } catch (err) {
-            // Not every provider accepts response_format. Any 400 here means the
-            // request shape was rejected, so retry without it — the prompt plus
-            // tolerant parsing covers us when the constraint is unavailable.
-            if (err?.status !== 400) throw err;
-            completion = await callChat(request);
+        for (let i = 0; i < OPTION_LADDER.length; i++) {
+            try {
+                completion = await callChat({ ...request, ...OPTION_LADDER[i] });
+                break;
+            } catch (err) {
+                const isLast = i === OPTION_LADDER.length - 1;
+                if (err?.status !== 400 || isLast) throw err;
+            }
         }
 
         const choice = completion.choices?.[0];
@@ -475,6 +486,12 @@ export default async function handler(req, res) {
         res.status(200).json({ ...normalise(value), truncated });
     } catch (error) {
         const status = error?.status && error.status >= 400 && error.status < 600 ? error.status : 500;
-        res.status(status).json({ error: describeError(error), baseURL: BASE_URL, model: MODEL });
+
+        const timedOut = error?.name === 'TimeoutError' || /timeout/i.test(error?.message || '');
+        const message = timedOut
+            ? `The model took too long to read ${(req.body?.images || []).length} screenshots. Try 3 or fewer per run, then combine the CSV exports.`
+            : describeError(error);
+
+        res.status(timedOut ? 504 : status).json({ error: message, model: MODEL });
     }
 }
