@@ -1,7 +1,14 @@
 // Any provider exposing an OpenAI-compatible /chat/completions endpoint works;
 // only these three values change. Gemini's documented base URL carries a
 // trailing slash, so strip it or every request would go to //chat/completions.
-const API_KEY = process.env.VISION_API_KEY || process.env.DASHSCOPE_API_KEY;
+// Trimmed because a key pasted into a dashboard often carries a trailing
+// newline, which makes the Authorization header invalid in a way that reads as
+// a rejected key rather than a malformed one.
+const KEY_SOURCE = process.env.VISION_API_KEY ? "VISION_API_KEY"
+    : process.env.DASHSCOPE_API_KEY ? "DASHSCOPE_API_KEY (fallback)"
+    : null;
+const RAW_KEY = process.env.VISION_API_KEY || process.env.DASHSCOPE_API_KEY || "";
+const API_KEY = RAW_KEY.trim();
 const BASE_URL = (process.env.VISION_BASE_URL || process.env.DASHSCOPE_BASE_URL
     || "https://generativelanguage.googleapis.com/v1beta/openai").replace(/\/+$/, "");
 const MODEL = process.env.VISION_MODEL || "gemini-2.5-flash";
@@ -220,7 +227,18 @@ async function probeModel(model) {
 }
 
 async function diagnose(req, res) {
-    const config = { baseURL: BASE_URL, model: MODEL, apiKeySet: Boolean(API_KEY) };
+    // Enough of the key to tell providers apart, never enough to use. Gemini keys
+    // begin "AIza"; a "sk-" prefix here means a leftover key is being sent to
+    // Google, which reports it as simply invalid.
+    const config = {
+        baseURL: BASE_URL,
+        model: MODEL,
+        apiKeySet: Boolean(API_KEY),
+        keySource: KEY_SOURCE,
+        keyPrefix: API_KEY ? `${API_KEY.slice(0, 4)}...` : null,
+        keyLength: API_KEY.length,
+        keyHadWhitespace: RAW_KEY !== RAW_KEY.trim()
+    };
 
     if (!config.apiKeySet) {
         return res.status(200).json({ ...config, ok: false, error: 'VISION_API_KEY is not set on the server.' });
