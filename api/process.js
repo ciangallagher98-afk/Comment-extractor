@@ -205,11 +205,12 @@ async function probe(url, init = {}, wantBody = false, bodyLimit = 600) {
 // AccessDenied.Unpurchased. Entitlement is only observable by calling a model,
 // so probe a shortlist and report which ones answer.
 const VISION_SHORTLIST = [
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-    "gemini-2.5-pro",
-    "gemini-2.0-flash",
-    "gemini-2.0-flash-lite"
+    // Current generation, named by the 404s the retired 2.x ids now return.
+    "gemini-3.6-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-pro-preview",
+    // Works today but is legacy: no longer offered to new users.
+    "gemini-2.5-flash"
 ];
 
 async function probeModel(model) {
