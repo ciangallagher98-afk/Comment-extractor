@@ -19,20 +19,27 @@ per run (`MAX_IMAGES`, kept in sync between both files).
 
 ## Setup
 
-Set these in Vercel under Settings → Environment Variables:
+Set these in Vercel under Settings -> Environment Variables:
 
 | Variable | Required | Default |
 | --- | --- | --- |
-| `DASHSCOPE_API_KEY` | yes | — |
-| `DASHSCOPE_BASE_URL` | no | `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` |
-| `VISION_MODEL` | no | `qwen3-vl-plus` |
+| `VISION_API_KEY` | yes | — |
+| `VISION_BASE_URL` | no | `https://generativelanguage.googleapis.com/v1beta/openai` |
+| `VISION_MODEL` | no | `gemini-2.5-flash` |
 
-The key comes from QwenCloud → API Keys (Pay-As-You-Go). QwenCloud exposes an
-OpenAI-compatible endpoint, so the standard `openai` client is used with a
-custom `baseURL` — swapping to another provider is a base URL and model change.
+The default is Google's Gemini API, whose free tier needs no card — get a key
+at [aistudio.google.com](https://aistudio.google.com). Any provider exposing an
+OpenAI-compatible `/chat/completions` endpoint works; switching providers is a
+change to these three values, not to code. A trailing slash on the base URL is
+stripped, so either form is fine.
 
-`VISION_MODEL` is an env var so you can A/B models without redeploying code.
-Check the QwenCloud Models page for the exact ids available on your account.
+`GET /api/process` is a diagnostic. It sends a tiny request to a shortlist of
+vision models and reports which ones the account can actually call — a provider
+listing its catalogue does not mean the key is entitled to any of it. Append
+`?model=<id>` to test one specific model, or `?full=1` to dump the catalogue.
+
+`VISION_API_KEY` falls back to `DASHSCOPE_API_KEY`, and `VISION_BASE_URL` to
+`DASHSCOPE_BASE_URL`, so an older deployment keeps working.
 
 ## Notes
 

@@ -1,5 +1,10 @@
-const BASE_URL = process.env.DASHSCOPE_BASE_URL || "https://dashscope-intl.aliyuncs.com/compatible-mode/v1";
-const MODEL = process.env.VISION_MODEL || "qwen3-vl-plus";
+// Any provider exposing an OpenAI-compatible /chat/completions endpoint works;
+// only these three values change. Gemini's documented base URL carries a
+// trailing slash, so strip it or every request would go to //chat/completions.
+const API_KEY = process.env.VISION_API_KEY || process.env.DASHSCOPE_API_KEY;
+const BASE_URL = (process.env.VISION_BASE_URL || process.env.DASHSCOPE_BASE_URL
+    || "https://generativelanguage.googleapis.com/v1beta/openai").replace(/\/+$/, "");
+const MODEL = process.env.VISION_MODEL || "gemini-2.5-flash";
 
 // Reading several screenshots takes well over the 10s default Vercel allows.
 export const maxDuration = 60;
@@ -12,7 +17,7 @@ async function callChat(payload) {
     const response = await fetch(`${BASE_URL}/chat/completions`, {
         method: "POST",
         headers: {
-            "Authorization": `Bearer ${process.env.DASHSCOPE_API_KEY}`,
+            "Authorization": `Bearer ${API_KEY}`,
             "Content-Type": "application/json"
         },
         body: JSON.stringify(payload),
@@ -188,19 +193,16 @@ async function probe(url, init = {}, wantBody = false, bodyLimit = 600) {
 // separates "cannot reach the endpoint at all" from "endpoint is fine, the image
 // payload is the problem", and reports the config actually in use. Never returns
 // the key itself, only whether one is present.
-// /models returns Alibaba's whole catalogue regardless of what the account is
-// entitled to — qwen3-vl-plus is listed yet answers 403 AccessDenied.Unpurchased.
-// Entitlement is only observable by actually calling a model, so probe a
-// shortlist of vision-capable ids and report which ones answer.
+// A /models listing shows a provider's catalogue, not what this account may
+// call — DashScope listed qwen3-vl-plus and still answered 403
+// AccessDenied.Unpurchased. Entitlement is only observable by calling a model,
+// so probe a shortlist and report which ones answer.
 const VISION_SHORTLIST = [
-    "qwen-vl-max",
-    "qwen-vl-plus",
-    "qwen3-vl-plus",
-    "qwen3-vl-flash",
-    "qwen3-vl-235b-a22b-instruct",
-    "qwen-vl-ocr-2025-11-20",
-    "qwen3.5-omni-flash",
-    "qvq-max"
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-2.5-pro",
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-lite"
 ];
 
 async function probeModel(model) {
@@ -218,10 +220,10 @@ async function probeModel(model) {
 }
 
 async function diagnose(req, res) {
-    const config = { baseURL: BASE_URL, model: MODEL, apiKeySet: Boolean(process.env.DASHSCOPE_API_KEY) };
+    const config = { baseURL: BASE_URL, model: MODEL, apiKeySet: Boolean(API_KEY) };
 
     if (!config.apiKeySet) {
-        return res.status(200).json({ ...config, ok: false, error: 'DASHSCOPE_API_KEY is not set on the server.' });
+        return res.status(200).json({ ...config, ok: false, error: 'VISION_API_KEY is not set on the server.' });
     }
 
     const url = new URL(req.url, `https://${req.headers.host}`);
@@ -246,7 +248,7 @@ async function diagnose(req, res) {
     // The full catalogue is long and we already know it lists unentitled models,
     // so only return it on request.
     if (url.searchParams.get('full') === '1') {
-        const auth = { "Authorization": `Bearer ${process.env.DASHSCOPE_API_KEY}` };
+        const auth = { "Authorization": `Bearer ${API_KEY}` };
         const models = await probe(`${BASE_URL}/models`, { headers: auth }, true, 500_000);
         try {
             payload.available = JSON.parse(models.body)?.data?.map(m => m.id).filter(Boolean) ?? null;
@@ -263,8 +265,8 @@ export default async function handler(req, res) {
     if (req.method === 'GET') return diagnose(req, res);
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
 
-    if (!process.env.DASHSCOPE_API_KEY) {
-        return res.status(500).json({ error: 'DASHSCOPE_API_KEY is not set on the server.' });
+    if (!API_KEY) {
+        return res.status(500).json({ error: 'VISION_API_KEY is not set on the server.' });
     }
 
     try {
