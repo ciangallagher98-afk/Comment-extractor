@@ -141,12 +141,20 @@ function describeError(error) {
     return `${error?.message || 'Analysis failed.'}${suffix}`;
 }
 
-// Raw fetch, no SDK in the way, so the unwrapped failure is visible.
-async function probe(url, init = {}) {
+// Raw fetch, no SDK in the way, so the unwrapped failure is visible. A status
+// alone does not say why the server refused, so capture the response body too —
+// that is where Alibaba puts the actual error code.
+async function probe(url, init = {}, wantBody = false) {
     const started = Date.now();
     try {
         const response = await fetch(url, { ...init, signal: AbortSignal.timeout(8000) });
-        return { reached: true, status: response.status, ms: Date.now() - started };
+        const result = { reached: true, status: response.status, ms: Date.now() - started };
+        if (wantBody) {
+            result.contentType = response.headers.get('content-type');
+            result.requestId = response.headers.get('x-request-id') || response.headers.get('x-acs-request-id');
+            result.body = (await response.text()).slice(0, 600);
+        }
+        return result;
     } catch (error) {
         return { reached: false, ms: Date.now() - started, error: describeError(error) };
     }
@@ -163,18 +171,19 @@ async function diagnose(res) {
         return res.status(200).json({ ...config, ok: false, error: 'DASHSCOPE_API_KEY is not set on the server.' });
     }
 
-    // Control probe first: if this fails too, the function has no outbound
-    // egress at all and the problem is not DashScope-specific.
-    const [control, direct] = await Promise.all([
+    const auth = { "Authorization": `Bearer ${process.env.DASHSCOPE_API_KEY}` };
+
+    // control  : is there outbound egress at all?
+    // models   : does the key authenticate, and which model ids exist on it?
+    // direct   : what exactly does the chat endpoint say, in its own words?
+    const [control, models, direct] = await Promise.all([
         probe("https://example.com"),
+        probe(`${BASE_URL}/models`, { headers: auth }, true),
         probe(`${BASE_URL}/chat/completions`, {
             method: "POST",
-            headers: {
-                "Authorization": `Bearer ${process.env.DASHSCOPE_API_KEY}`,
-                "Content-Type": "application/json"
-            },
+            headers: { ...auth, "Content-Type": "application/json" },
             body: JSON.stringify({ model: MODEL, max_tokens: 8, messages: [{ role: "user", content: "Reply with the word OK." }] })
-        })
+        }, true)
     ]);
 
     try {
@@ -183,11 +192,12 @@ async function diagnose(res) {
             max_tokens: 8,
             messages: [{ role: "user", content: "Reply with the word OK." }]
         });
-        return res.status(200).json({ ...config, ok: true, control, direct, reply: sdk.choices?.[0]?.message?.content ?? "" });
+        return res.status(200).json({ ...config, ok: true, control, models, direct, reply: sdk.choices?.[0]?.message?.content ?? "" });
     } catch (error) {
         return res.status(200).json({
-            ...config, ok: false, control, direct,
+            ...config, ok: false, control, models, direct,
             status: error?.status ?? null,
+            errorType: error?.constructor?.name ?? null,
             error: describeError(error)
         });
     }
