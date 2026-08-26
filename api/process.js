@@ -188,65 +188,79 @@ async function probe(url, init = {}, wantBody = false, bodyLimit = 600) {
 // separates "cannot reach the endpoint at all" from "endpoint is fine, the image
 // payload is the problem", and reports the config actually in use. Never returns
 // the key itself, only whether one is present.
-async function diagnose(res) {
+// /models returns Alibaba's whole catalogue regardless of what the account is
+// entitled to — qwen3-vl-plus is listed yet answers 403 AccessDenied.Unpurchased.
+// Entitlement is only observable by actually calling a model, so probe a
+// shortlist of vision-capable ids and report which ones answer.
+const VISION_SHORTLIST = [
+    "qwen-vl-max",
+    "qwen-vl-plus",
+    "qwen3-vl-plus",
+    "qwen3-vl-flash",
+    "qwen3-vl-235b-a22b-instruct",
+    "qwen-vl-ocr-2025-11-20",
+    "qwen3.5-omni-flash",
+    "qvq-max"
+];
+
+async function probeModel(model) {
+    const started = Date.now();
+    try {
+        const reply = await callChat({
+            model,
+            max_tokens: 8,
+            messages: [{ role: "user", content: "Reply with the word OK." }]
+        });
+        return { model, usable: true, ms: Date.now() - started, reply: reply.choices?.[0]?.message?.content ?? "" };
+    } catch (error) {
+        return { model, usable: false, ms: Date.now() - started, status: error?.status ?? null, error: describeError(error) };
+    }
+}
+
+async function diagnose(req, res) {
     const config = { baseURL: BASE_URL, model: MODEL, apiKeySet: Boolean(process.env.DASHSCOPE_API_KEY) };
 
     if (!config.apiKeySet) {
         return res.status(200).json({ ...config, ok: false, error: 'DASHSCOPE_API_KEY is not set on the server.' });
     }
 
-    const auth = { "Authorization": `Bearer ${process.env.DASHSCOPE_API_KEY}` };
+    const url = new URL(req.url, `https://${req.headers.host}`);
+    const only = url.searchParams.get('model');
 
-    // control  : is there outbound egress at all?
-    // models   : does the key authenticate, and which model ids exist on it?
-    // direct   : what exactly does the chat endpoint say, in its own words?
-    const [control, models, direct] = await Promise.all([
-        probe("https://example.com"),
-        probe(`${BASE_URL}/models`, { headers: auth }, true, 500_000),
-        probe(`${BASE_URL}/chat/completions`, {
-            method: "POST",
-            headers: { ...auth, "Content-Type": "application/json" },
-            body: JSON.stringify({ model: MODEL, max_tokens: 8, messages: [{ role: "user", content: "Reply with the word OK." }] })
-        }, true)
-    ]);
+    // ?model=<id> tests one specific id; otherwise walk the shortlist. The
+    // configured model is always included so its status is never ambiguous.
+    const candidates = only
+        ? [only]
+        : [...new Set([MODEL, ...VISION_SHORTLIST])];
 
-    // Ids are short; the raw body is not. Return the parsed list so the whole
-    // catalogue is visible rather than the first 600 characters of it.
-    let available = null;
-    if (models.reached && models.status === 200) {
+    const results = await Promise.all(candidates.map(probeModel));
+    const usable = results.filter(r => r.usable).map(r => r.model);
+
+    const payload = {
+        ...config,
+        ok: usable.includes(MODEL),
+        usable,
+        results: results.sort((a, b) => Number(b.usable) - Number(a.usable))
+    };
+
+    // The full catalogue is long and we already know it lists unentitled models,
+    // so only return it on request.
+    if (url.searchParams.get('full') === '1') {
+        const auth = { "Authorization": `Bearer ${process.env.DASHSCOPE_API_KEY}` };
+        const models = await probe(`${BASE_URL}/models`, { headers: auth }, true, 500_000);
         try {
-            available = JSON.parse(models.body)?.data?.map(m => m.id).filter(Boolean) ?? null;
+            payload.available = JSON.parse(models.body)?.data?.map(m => m.id).filter(Boolean) ?? null;
         } catch (error) {
-            models.parseError = describeError(error);
+            payload.available = null;
+            payload.availableError = describeError(error);
         }
     }
-    if (available) {
-        delete models.body;
-        models.count = available.length;
-        models.visionCandidates = available.filter(id => /vl|vision|omni|multimodal/i.test(id));
-    }
 
-    try {
-        const reply = await callChat({
-            model: MODEL,
-            max_tokens: 8,
-            messages: [{ role: "user", content: "Reply with the word OK." }]
-        });
-        return res.status(200).json({
-            ...config, ok: true, control, models, available, direct,
-            reply: reply.choices?.[0]?.message?.content ?? ""
-        });
-    } catch (error) {
-        return res.status(200).json({
-            ...config, ok: false, control, models, available, direct,
-            status: error?.status ?? null,
-            error: describeError(error)
-        });
-    }
+    return res.status(200).json(payload);
 }
 
 export default async function handler(req, res) {
-    if (req.method === 'GET') return diagnose(res);
+    if (req.method === 'GET') return diagnose(req, res);
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
 
     if (!process.env.DASHSCOPE_API_KEY) {
