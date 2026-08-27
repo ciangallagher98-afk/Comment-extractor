@@ -519,8 +519,16 @@
 
     function buildInteractions() {
         const rows = [];
+        const includePost = $('pulsar-include-post').checked && postData?.text;
 
-        if ($('pulsar-include-post').checked && postData?.text) {
+        // remoteId / remoteParentId / remoteRootId are what rebuild the thread in
+        // Pulsar: the post is the root, top-level comments hang off it, and a
+        // reply hangs off the most recent top-level comment above it — which is
+        // the parent, since comments arrive in thread order.
+        const postId = includePost ? stableId('post', postData.author, postData.text) : null;
+        let lastTopLevelId = null;
+
+        if (includePost) {
             rows.push({
                 author: {
                     name: postData.author || 'Unknown',
@@ -530,7 +538,7 @@
                 content: {
                     body: postData.text,
                     publishedAt: convertToISO(postData.timestamp),
-                    remoteId: stableId('post', postData.author, postData.text),
+                    remoteId: postId,
                     counters: { likes: Number(postData.likes) || 0 },
                     type: 'post'
                 }
@@ -540,19 +548,35 @@
         // Image-only rows carry no body, and the pusher requires one — the same
         // rows the CSV export drops.
         currentData.filter(c => c.text !== '[Image/GIF Only]').forEach(c => {
+            const id = stableId('comment', c.author, c.text, c.timestamp);
+
+            let parentId, rootId;
+            if (c.isReply) {
+                parentId = lastTopLevelId || postId;
+                rootId = postId || lastTopLevelId;
+            } else {
+                parentId = postId;
+                rootId = postId;
+                lastTopLevelId = id;
+            }
+
+            const content = {
+                body: c.text,
+                publishedAt: convertToISO(c.timestamp),
+                remoteId: id,
+                counters: { likes: Number(c.likes) || 0 },
+                type: 'comment'
+            };
+            if (parentId) content.remoteParentId = parentId;
+            if (rootId) content.remoteRootId = rootId;
+
             rows.push({
                 author: {
                     name: c.author || 'Unknown',
                     screenName: handle(c.author),
                     remoteId: stableId('author', c.author)
                 },
-                content: {
-                    body: c.text,
-                    publishedAt: convertToISO(c.timestamp),
-                    remoteId: stableId('comment', c.author, c.text, c.timestamp),
-                    counters: { likes: Number(c.likes) || 0 },
-                    type: 'comment'
-                }
+                content
             });
         });
 
@@ -575,7 +599,7 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 apiKey: $('pulsar-key').value.trim(),
-                searchHash: $('pulsar-search').value.trim(),
+                searchHash: extras.searchHash ?? $('pulsar-search').value.trim(),
                 mode,
                 interactions,
                 ...extras
@@ -623,23 +647,41 @@
         const fail = html => pulsarResult(html, 'bg-red-50 text-red-800 border border-red-200');
 
         try {
-            let hash = $('pulsar-search').value.trim();
+            const typed = $('pulsar-search').value.trim();
             let created = null;
+            let candidates = typed ? [typed] : [];
 
-            if (!hash) {
+            if (!typed) {
                 pulsarResult('Creating search…', 'bg-slate-50 text-slate-600');
                 const result = await callPulsar('createSearch', null, { name: $('pulsar-name').value.trim() });
                 if (!result.ok) return fail(`<strong>Could not create the search.</strong>${problemList(result.problems || [])}`);
-                hash = result.searchHash;
                 created = result.name;
-                $('pulsar-search').value = hash;
+                // The pusher docs call this both a search hash and a search id, and
+                // TRAC returns both. Try each against the dry run — which commits
+                // nothing — rather than guessing.
+                candidates = [...new Set([result.searchHash, result.searchId].filter(Boolean))];
             }
 
             const batches = chunk(rows, PULSAR_CHUNK);
 
-            for (let i = 0; i < batches.length; i++) {
+            pulsarResult('Validating…', 'bg-slate-50 text-slate-600');
+            let hash = null;
+            let lastProblems = [];
+
+            for (const candidate of candidates) {
+                const result = await callPulsar('validate', batches[0], { searchHash: candidate });
+                if (result.ok) { hash = candidate; break; }
+                lastProblems = result.problems || [];
+            }
+
+            if (!hash) {
+                return fail(`<strong>Validation failed — nothing was pushed.</strong>${problemList(lastProblems)}`);
+            }
+            $('pulsar-search').value = hash;
+
+            for (let i = 1; i < batches.length; i++) {
                 pulsarResult(`Validating batch ${i + 1} of ${batches.length}…`, 'bg-slate-50 text-slate-600');
-                const result = await callPulsar('validate', batches[i]);
+                const result = await callPulsar('validate', batches[i], { searchHash: hash });
                 if (!result.ok) {
                     return fail(`<strong>Validation failed in batch ${i + 1} — nothing was pushed.</strong>${problemList(result.problems || [])}`);
                 }
@@ -648,7 +690,7 @@
             let pushed = 0;
             for (let i = 0; i < batches.length; i++) {
                 pulsarResult(`Pushing batch ${i + 1} of ${batches.length}…`, 'bg-slate-50 text-slate-600');
-                const result = await callPulsar('store', batches[i]);
+                const result = await callPulsar('store', batches[i], { searchHash: hash });
                 if (!result.ok) {
                     return fail(`<strong>Batch ${i + 1} failed after ${pushed} interaction${pushed === 1 ? '' : 's'} were already pushed.</strong>${problemList(result.problems || [])}`);
                 }

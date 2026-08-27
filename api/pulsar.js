@@ -9,15 +9,18 @@ const PULSAR_URL = process.env.PULSAR_GRAPHQL_URL || "https://interaction-pusher
 const TRAC_URL = process.env.PULSAR_TRAC_URL || "https://trac.pulsarplatform.com/graphql";
 const AUTH_HEADER = process.env.PULSAR_AUTH_HEADER || "Authorization";
 const AUTH_SCHEME = process.env.PULSAR_AUTH_SCHEME ?? "Bearer";
+// dataType is a required Int the schema does not enumerate. The reference's
+// worked example uses 1; overridable once the platform team confirms.
+const DATA_TYPE = Number(process.env.PULSAR_DATA_TYPE ?? 1);
 
 export const maxDuration = 60;
 
 const MUTATIONS = {
-    validate: `mutation FPDValidate($interactions: [Interaction!]!, $searches: [String!]!) {
-  validateInteraction(interactions: $interactions, searches: $searches) { errors message status }
+    validate: `mutation FPDValidate($dataType: Int!, $interactions: [Interaction!]!, $searches: [String!]!) {
+  validateInteraction(dataType: $dataType, interactions: $interactions, searches: $searches) { errors message status }
 }`,
-    store: `mutation FPDStore($interactions: [Interaction!]!, $searches: [String!]!) {
-  storeInteraction(interactions: $interactions, searches: $searches) { errors message status }
+    store: `mutation FPDStore($dataType: Int!, $interactions: [Interaction!]!, $searches: [String!]!) {
+  storeInteraction(dataType: $dataType, interactions: $interactions, searches: $searches) { errors message status }
 }`
 };
 
@@ -128,7 +131,13 @@ async function createSearch({ apiKey, name }) {
         return { ok: false, stage: 'createSearch', problems: ['Pulsar created no search and reported no error.'] };
     }
 
-    return { ok: true, stage: 'createSearch', searchHash, name: payload.search.name || name };
+    return {
+        ok: true,
+        stage: 'createSearch',
+        searchHash,
+        searchId: payload.search.id != null ? String(payload.search.id) : null,
+        name: payload.search.name || name
+    };
 }
 
 // GraphQL reports a bad variable with a path like [1, "content", "type"]. Turn
@@ -219,7 +228,7 @@ export default async function handler(req, res) {
             },
             body: JSON.stringify({
                 query: MUTATIONS[mode],
-                variables: { interactions, searches: [searchHash] }
+                variables: { dataType: DATA_TYPE, interactions, searches: [String(searchHash)] }
             }),
             signal: AbortSignal.timeout(45_000)
         });

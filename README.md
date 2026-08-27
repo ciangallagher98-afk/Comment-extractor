@@ -31,6 +31,7 @@ Set these in Vercel under Settings -> Environment Variables:
 | `PULSAR_TRAC_URL` | no | `https://trac.pulsarplatform.com/graphql` |
 | `PULSAR_AUTH_HEADER` | no | `Authorization` |
 | `PULSAR_AUTH_SCHEME` | no | `Bearer` |
+| `PULSAR_DATA_TYPE` | no | `1` |
 
 The default is Google's Gemini API, whose free tier needs no card — get a key
 at [aistudio.google.com](https://aistudio.google.com). Any provider exposing an
@@ -97,6 +98,20 @@ A batch is all-or-nothing: one bad row rejects the whole call. So every batch is
 validated with `validateInteraction` before any is sent to `storeInteraction`,
 and rows are checked locally first, which names the offending row without a
 round trip.
+
+Both mutations require `dataType: Int!`, which the schema does not enumerate.
+The reference's worked example uses `1`, so that is the default; override with
+`PULSAR_DATA_TYPE` once the platform team confirms the right value.
+
+`remoteId` / `remoteParentId` / `remoteRootId` rebuild the thread in Pulsar: the
+post is the root, top-level comments hang off it, and a reply hangs off the most
+recent top-level comment above it — which is its parent, since comments arrive
+in thread order.
+
+The pusher docs describe `searches` as both a search hash and a search id, and
+TRAC returns both. Rather than guess, each is tried against `validateInteraction`
+— a dry run that commits nothing — and whichever the API accepts is used for the
+push.
 
 `content.remoteId` is derived from the content itself rather than randomly, so
 re-pushing the same thread updates those rows instead of duplicating them. This
