@@ -31,7 +31,51 @@ const CREATE_SEARCH = `mutation CreateFPDSearch($input: CreateTopicsSearchInput!
   }
 }`;
 
-async function createSearch({ apiKey, name, keywords }) {
+// userPermissions takes no arguments and returns a JSON scalar, so it is the
+// cheapest way to ask "is this key good?" without touching any data.
+async function checkKey(apiKey) {
+    const response = await fetch(TRAC_URL, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            [AUTH_HEADER]: AUTH_SCHEME ? `${AUTH_SCHEME} ${apiKey}` : apiKey
+        },
+        body: JSON.stringify({ query: `query CheckKey { userPermissions }` }),
+        signal: AbortSignal.timeout(20_000)
+    });
+
+    const text = await response.text();
+
+    if (response.status === 401 || response.status === 403) {
+        return { ok: false, stage: 'checkKey', problems: ['Pulsar rejected the API key.'] };
+    }
+
+    let body;
+    try {
+        body = JSON.parse(text);
+    } catch {
+        return {
+            ok: false, stage: 'checkKey',
+            problems: [`TRAC returned a non-JSON response (HTTP ${response.status}): ${text.slice(0, 160)}`]
+        };
+    }
+
+    const problems = describeProblems(body);
+    if (problems.length) return { ok: false, stage: 'checkKey', problems };
+
+    // A response can be valid JSON and still not be a GraphQL reply — a proxy or
+    // error page, say. Without this, anything parseable would read as success.
+    if (!body || typeof body !== 'object' || !('data' in body)) {
+        return {
+            ok: false, stage: 'checkKey',
+            problems: [`TRAC returned an unexpected response (HTTP ${response.status}): ${text.slice(0, 160)}`]
+        };
+    }
+
+    return { ok: true, stage: 'checkKey', permissions: body.data?.userPermissions ?? null };
+}
+
+async function createSearch({ apiKey, name }) {
     const response = await fetch(TRAC_URL, {
         method: 'POST',
         headers: {
@@ -44,9 +88,10 @@ async function createSearch({ apiKey, name, keywords }) {
                 input: {
                     name,
                     categories: ["FIRST_PARTY_DATA"],
-                    // keywords is required by the schema and is a list of lists:
-                    // the inner list is OR'd, the outer AND'd.
-                    keywords: [keywords]
+                    // The schema types keywords as non-null, but a first-party-data
+                    // source rejects any actual keyword — "Keywords are not
+                    // permitted with the selected sources" — so send an empty list.
+                    keywords: []
                 }
             }
         }),
@@ -141,19 +186,19 @@ export default async function handler(req, res) {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
 
     try {
-        const { apiKey, searchHash, mode, interactions, name, keywords } = req.body || {};
+        const { apiKey, searchHash, mode, interactions, name } = req.body || {};
 
         if (!apiKey) return res.status(400).json({ error: 'Enter your Pulsar API key.' });
 
+        if (mode === 'checkKey') {
+            return res.status(200).json(await checkKey(apiKey));
+        }
+
         if (mode === 'createSearch') {
             const cleanName = String(name || '').trim();
-            const cleanKeywords = (Array.isArray(keywords) ? keywords : [])
-                .map(k => String(k).trim()).filter(Boolean);
-
             if (!cleanName) return res.status(400).json({ error: 'Give the new search a name.' });
-            if (!cleanKeywords.length) return res.status(400).json({ error: 'Add at least one keyword for the new search.' });
 
-            return res.status(200).json(await createSearch({ apiKey, name: cleanName, keywords: cleanKeywords }));
+            return res.status(200).json(await createSearch({ apiKey, name: cleanName }));
         }
         if (!searchHash) return res.status(400).json({ error: 'Enter the search hash to push into.' });
         if (!MUTATIONS[mode]) return res.status(400).json({ error: 'mode must be "validate" or "store".' });

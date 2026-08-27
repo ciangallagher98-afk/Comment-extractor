@@ -84,9 +84,14 @@ a search; TRAC (v1) can. So the tool creates a topics search via
 `searchHash` off the returned `TopicsSearch`, and pushes into that. An existing
 hash can be pasted instead.
 
-`createTopicsSearch` requires `keywords`, which is a list of lists — the inner
-list is OR'd, the outer AND'd — so the tool sends one inner list. Name and
-keywords are seeded from the extracted post and themes and can be edited.
+The schema types `keywords` as non-null, but a first-party-data source rejects
+any actual keyword ("Keywords are not permitted with the selected sources"), so
+an empty list is sent. The search name is seeded from the extracted post and can
+be edited.
+
+The panel has two buttons. "Validate API key" runs `userPermissions` against
+TRAC — no arguments, no data touched — purely to confirm the key. "Create search
+& push" does the whole sequence: create, validate every batch, then store.
 
 A batch is all-or-nothing: one bad row rejects the whole call. So every batch is
 validated with `validateInteraction` before any is sent to `storeInteraction`,
