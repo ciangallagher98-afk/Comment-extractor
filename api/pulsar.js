@@ -3,7 +3,11 @@
 // The client's API key arrives per request from the browser and is used once to
 // sign the upstream call. It is never stored, never written to a log, and never
 // returned in a response — this file must stay that way.
+// Two different APIs. Searches are created on TRAC (v1), whose endpoint is
+// documented; content is pushed to the v2 pusher, whose endpoint is not, so it
+// has to be configured.
 const PULSAR_URL = process.env.PULSAR_GRAPHQL_URL;
+const TRAC_URL = process.env.PULSAR_TRAC_URL || "https://trac.pulsarplatform.com/graphql";
 const AUTH_HEADER = process.env.PULSAR_AUTH_HEADER || "Authorization";
 const AUTH_SCHEME = process.env.PULSAR_AUTH_SCHEME ?? "Bearer";
 
@@ -17,6 +21,93 @@ const MUTATIONS = {
   storeInteraction(interactions: $interactions, searches: $searches) { errors message status }
 }`
 };
+
+// The pusher API cannot create a search, but TRAC can: a topics search with
+// FIRST_PARTY_DATA as its only category, whose payload carries the searchHash
+// the pusher then needs.
+const CREATE_SEARCH = `mutation CreateFPDSearch($input: CreateTopicsSearchInput!) {
+  createTopicsSearch(input: $input) {
+    errors { message path }
+    search { searchHash name id }
+  }
+}`;
+
+async function createSearch({ apiKey, name, keywords }) {
+    const response = await fetch(TRAC_URL, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            [AUTH_HEADER]: AUTH_SCHEME ? `${AUTH_SCHEME} ${apiKey}` : apiKey
+        },
+        body: JSON.stringify({
+            query: CREATE_SEARCH,
+            variables: {
+                input: {
+                    name,
+                    categories: ["FIRST_PARTY_DATA"],
+                    // keywords is required by the schema and is a list of lists:
+                    // the inner list is OR'd, the outer AND'd.
+                    keywords: [keywords]
+                }
+            }
+        }),
+        signal: AbortSignal.timeout(45_000)
+    });
+
+    const text = await response.text();
+
+    if (response.status === 401 || response.status === 403) {
+        const error = new Error('Pulsar rejected the API key.');
+        error.status = response.status;
+        throw error;
+    }
+
+    let body;
+    try {
+        body = JSON.parse(text);
+    } catch {
+        const error = new Error(`TRAC returned a non-JSON response (HTTP ${response.status}): ${text.slice(0, 200)}`);
+        error.status = 502;
+        throw error;
+    }
+
+    const problems = describeProblems(body);
+    const payload = body?.data?.createTopicsSearch;
+    const fieldErrors = (payload?.errors || []).map(e =>
+        `${(e.path || []).join('.') || 'search'}: ${e.message}`);
+
+    const all = [...problems, ...fieldErrors];
+    if (all.length) return { ok: false, stage: 'createSearch', problems: all };
+
+    const searchHash = payload?.search?.searchHash;
+    if (!searchHash) {
+        return { ok: false, stage: 'createSearch', problems: ['Pulsar created no search and reported no error.'] };
+    }
+
+    return { ok: true, stage: 'createSearch', searchHash, name: payload.search.name || name };
+}
+
+// GraphQL reports a bad variable with a path like [1, "content", "type"]. Turn
+// that into "row 2 · content.type", which points at something the user can see.
+function describeProblems(body) {
+    const out = [];
+
+    for (const error of body?.errors || []) {
+        const problems = error?.extensions?.problems;
+        if (Array.isArray(problems) && problems.length) {
+            for (const p of problems) {
+                const [index, ...rest] = p.path || [];
+                const where = Number.isInteger(index)
+                    ? `row ${index + 1}${rest.length ? ` · ${rest.join('.')}` : ''}`
+                    : (p.path || []).join('.');
+                out.push(`${where}: ${p.explanation}`);
+            }
+        } else if (error?.message) {
+            out.push(error.message);
+        }
+    }
+    return out;
+}
 
 const CONTENT_TYPES = new Set(["post", "comment"]);
 const ISO8601 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})$/;
@@ -46,41 +137,30 @@ function findLocalProblems(interactions) {
     return problems;
 }
 
-// GraphQL reports a bad variable with a path like [1, "content", "type"]. Turn
-// that into "row 2 · content.type", which points at something the user can see.
-function describeProblems(body) {
-    const out = [];
-
-    for (const error of body?.errors || []) {
-        const problems = error?.extensions?.problems;
-        if (Array.isArray(problems) && problems.length) {
-            for (const p of problems) {
-                const [index, ...rest] = p.path || [];
-                const where = Number.isInteger(index)
-                    ? `row ${index + 1}${rest.length ? ` · ${rest.join('.')}` : ''}`
-                    : (p.path || []).join('.');
-                out.push(`${where}: ${p.explanation}`);
-            }
-        } else if (error?.message) {
-            out.push(error.message);
-        }
-    }
-    return out;
-}
 
 export default async function handler(req, res) {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
 
-    if (!PULSAR_URL) {
-        return res.status(500).json({
-            error: 'PULSAR_GRAPHQL_URL is not set on the server. Set it to the Pulsar GraphQL v2 endpoint.'
-        });
-    }
-
     try {
-        const { apiKey, searchHash, mode, interactions } = req.body || {};
+        const { apiKey, searchHash, mode, interactions, name, keywords } = req.body || {};
 
         if (!apiKey) return res.status(400).json({ error: 'Enter your Pulsar API key.' });
+
+        if (mode === 'createSearch') {
+            const cleanName = String(name || '').trim();
+            const cleanKeywords = (Array.isArray(keywords) ? keywords : [])
+                .map(k => String(k).trim()).filter(Boolean);
+
+            if (!cleanName) return res.status(400).json({ error: 'Give the new search a name.' });
+            if (!cleanKeywords.length) return res.status(400).json({ error: 'Add at least one keyword for the new search.' });
+
+            return res.status(200).json(await createSearch({ apiKey, name: cleanName, keywords: cleanKeywords }));
+        }
+        if (!PULSAR_URL) {
+            return res.status(500).json({
+                error: 'PULSAR_GRAPHQL_URL is not set on the server. Set it to the Pulsar GraphQL v2 pusher endpoint.'
+            });
+        }
         if (!searchHash) return res.status(400).json({ error: 'Enter the search hash to push into.' });
         if (!MUTATIONS[mode]) return res.status(400).json({ error: 'mode must be "validate" or "store".' });
         if (!Array.isArray(interactions) || !interactions.length) {
@@ -141,8 +221,15 @@ export default async function handler(req, res) {
 
     } catch (error) {
         const timedOut = error?.name === 'TimeoutError' || /timeout/i.test(error?.message || '');
-        return res.status(timedOut ? 504 : 500).json({
-            error: timedOut ? 'Pulsar did not respond in time. Try a smaller batch.' : (error?.message || 'Push failed.')
-        });
+        if (timedOut) {
+            return res.status(504).json({ error: 'Pulsar did not respond in time. Try a smaller batch.' });
+        }
+
+        // createSearch marks auth and gateway failures with a status; honour it
+        // rather than flattening everything to 500.
+        const status = Number.isInteger(error?.status) && error.status >= 400 && error.status < 600
+            ? error.status
+            : 500;
+        return res.status(status).json({ error: error?.message || 'Push failed.' });
     }
 }

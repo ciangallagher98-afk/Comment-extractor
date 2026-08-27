@@ -28,6 +28,7 @@ Set these in Vercel under Settings -> Environment Variables:
 | `VISION_BASE_URL` | no | `https://generativelanguage.googleapis.com/v1beta/openai` |
 | `VISION_MODEL` | no | `gemini-2.5-flash` |
 | `PULSAR_GRAPHQL_URL` | only for the Pulsar push | — |
+| `PULSAR_TRAC_URL` | no | `https://trac.pulsarplatform.com/graphql` |
 | `PULSAR_AUTH_HEADER` | no | `Authorization` |
 | `PULSAR_AUTH_SCHEME` | no | `Bearer` |
 
@@ -76,8 +77,15 @@ something other than `Authorization: Bearer <key>`, override
 `PULSAR_AUTH_HEADER` and `PULSAR_AUTH_SCHEME`; an empty scheme sends the key
 bare.
 
-The pusher cannot create a search — that is REST API v3 only — so the search
-must exist and its hash is pasted into the tool.
+Two different APIs are involved. The v2 pusher stores content but cannot create
+a search; TRAC (v1) can. So the tool creates a topics search via
+`createTopicsSearch` with `FIRST_PARTY_DATA` as its only category, reads the
+`searchHash` off the returned `TopicsSearch`, and pushes into that. An existing
+hash can be pasted instead.
+
+`createTopicsSearch` requires `keywords`, which is a list of lists — the inner
+list is OR'd, the outer AND'd — so the tool sends one inner list. Name and
+keywords are seeded from the extracted post and themes and can be edited.
 
 A batch is all-or-nothing: one bad row rejects the whole call. So every batch is
 validated with `validateInteraction` before any is sent to `storeInteraction`,

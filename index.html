@@ -170,10 +170,37 @@
                 </label>
                 <label class="block">
                     <span class="text-[10px] uppercase tracking-widest text-slate-400 font-black">Search hash</span>
-                    <input id="pulsar-search" type="text" autocomplete="off" placeholder="e.g. a1b2c3d4"
+                    <input id="pulsar-search" type="text" autocomplete="off" placeholder="Paste one, or create a search below"
                            class="mt-1.5 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-indigo-400">
                 </label>
             </div>
+
+            <details id="pulsar-create" class="border border-slate-200 rounded-xl mb-4 group">
+                <summary class="cursor-pointer select-none px-4 py-3 text-sm font-semibold flex items-center gap-2 list-none">
+                    <span class="text-indigo-600 text-xs transition-transform group-open:rotate-90">▶</span>
+                    Create a new first-party-data search
+                </summary>
+                <div class="px-4 pb-4 pt-0">
+                    <p class="text-slate-500 text-xs mb-4">
+                        Creates a topics search with <code class="bg-slate-100 px-1 rounded">FIRST_PARTY_DATA</code> as its only
+                        category, then fills in its search hash above.
+                    </p>
+                    <div class="grid md:grid-cols-2 gap-4 mb-3">
+                        <label class="block">
+                            <span class="text-[10px] uppercase tracking-widest text-slate-400 font-black">Search name</span>
+                            <input id="pulsar-name" type="text" autocomplete="off"
+                                   class="mt-1.5 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-indigo-400">
+                        </label>
+                        <label class="block">
+                            <span class="text-[10px] uppercase tracking-widest text-slate-400 font-black">Keywords</span>
+                            <input id="pulsar-keywords" type="text" autocomplete="off" placeholder="comma separated"
+                                   class="mt-1.5 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-indigo-400">
+                            <span class="text-[10px] text-slate-400 mt-1 block">Pulsar requires keywords on a topics search. Broad terms are safest.</span>
+                        </label>
+                    </div>
+                    <button id="pulsar-create-btn" class="text-indigo-600 text-[10px] font-black hover:bg-indigo-50 px-4 py-2.5 rounded-lg border border-indigo-100 transition-colors">CREATE SEARCH</button>
+                </div>
+            </details>
 
             <label class="flex items-center gap-2 text-sm text-slate-600 mb-4">
                 <input id="pulsar-include-post" type="checkbox" checked class="rounded border-slate-300">
@@ -371,6 +398,16 @@
 
         const pushable = buildInteractions().length;
         $('pulsar-count').textContent = `${pushable} interaction${pushable === 1 ? '' : 's'} ready`;
+
+        if (!$('pulsar-name').value) {
+            const who = result.post?.author ? `${result.post.author} ` : '';
+            $('pulsar-name').value = `${who}comments — ${(analysisTime || new Date()).toLocaleDateString()}`;
+        }
+        if (!$('pulsar-keywords').value) {
+            const seeds = (result.themes || []).map(t => t.label).slice(0, 3);
+            if (!seeds.length && result.post?.author) seeds.push(String(result.post.author).replace(/^@/, ''));
+            $('pulsar-keywords').value = seeds.join(', ');
+        }
     }
 
     function renderPost(post) {
@@ -555,7 +592,7 @@
         problems.slice(0, 12).map(p => `<li>${esc(p)}</li>`).join('')
     }</ul>${problems.length > 12 ? `<p class="mt-2 text-xs">…and ${problems.length - 12} more.</p>` : ''}`;
 
-    async function callPulsar(mode, interactions) {
+    async function callPulsar(mode, interactions, extras = {}) {
         const response = await fetch('/api/pulsar', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -563,7 +600,8 @@
                 apiKey: $('pulsar-key').value.trim(),
                 searchHash: $('pulsar-search').value.trim(),
                 mode,
-                interactions
+                interactions,
+                ...extras
             })
         });
         const body = await response.json().catch(() => ({ error: `Server returned ${response.status}` }));
@@ -624,6 +662,48 @@
             buttons.forEach(b => { b.disabled = false; b.classList.remove('opacity-60'); });
         }
     }
+
+
+    // Creating the search is a TRAC (v1) call; the pusher API cannot do it. The
+    // payload carries back the searchHash the push then needs, so it is filled in
+    // rather than copied by hand.
+    async function createPulsarSearch() {
+        const btn = $('pulsar-create-btn');
+        const keywords = $('pulsar-keywords').value.split(',').map(k => k.trim()).filter(Boolean);
+
+        btn.disabled = true;
+        btn.classList.add('opacity-60');
+        pulsarResult('Creating search…', 'bg-slate-50 text-slate-600');
+
+        try {
+            const result = await callPulsar('createSearch', null, {
+                name: $('pulsar-name').value.trim(),
+                keywords
+            });
+
+            if (!result.ok) {
+                return pulsarResult(`<strong>Could not create the search.</strong>${problemList(result.problems || [])}`,
+                    'bg-red-50 text-red-800 border border-red-200');
+            }
+
+            $('pulsar-search').value = result.searchHash;
+            try { sessionStorage.setItem('pulsar-search', result.searchHash); } catch { /* private mode */ }
+            $('pulsar-create').open = false;
+
+            pulsarResult(
+                `<strong>Search created.</strong> “${esc(result.name)}” — hash <code class="bg-white/60 px-1 rounded">${esc(result.searchHash)}</code>, filled in above. Push when ready.`,
+                'bg-emerald-50 text-emerald-800 border border-emerald-200');
+
+        } catch (err) {
+            pulsarResult(`<strong>Could not create the search.</strong> ${esc(err.message)}`,
+                'bg-red-50 text-red-800 border border-red-200');
+        } finally {
+            btn.disabled = false;
+            btn.classList.remove('opacity-60');
+        }
+    }
+
+    $('pulsar-create-btn').onclick = createPulsarSearch;
 
     $('pulsar-validate').onclick = () => runPulsar(false);
     $('pulsar-push').onclick = () => runPulsar(true);
