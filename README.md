@@ -27,7 +27,7 @@ Set these in Vercel under Settings -> Environment Variables:
 | `VISION_API_KEY` | yes | — |
 | `VISION_BASE_URL` | no | `https://generativelanguage.googleapis.com/v1beta/openai` |
 | `VISION_MODEL` | no | `gemini-2.5-flash` |
-| `PULSAR_GRAPHQL_URL` | only for the Pulsar push | — |
+| `PULSAR_GRAPHQL_URL` | no | `https://interaction-pusher.pulsarplatform.com/graphql` |
 | `PULSAR_TRAC_URL` | no | `https://trac.pulsarplatform.com/graphql` |
 | `PULSAR_AUTH_HEADER` | no | `Authorization` |
 | `PULSAR_AUTH_SCHEME` | no | `Bearer` |
@@ -72,8 +72,9 @@ and there is no dependency to keep current.
 `Interaction` records: the original post as `type: "post"`, each comment as
 `type: "comment"`, with `counters.likes` and an ISO8601 `publishedAt`.
 
-Set `PULSAR_GRAPHQL_URL` to the GraphQL v2 endpoint. If the API expects
-something other than `Authorization: Bearer <key>`, override
+Both endpoints are built in, so nothing needs configuring to use the push. If
+either moves, override `PULSAR_GRAPHQL_URL` or `PULSAR_TRAC_URL`. If the API
+expects something other than `Authorization: Bearer <key>`, override
 `PULSAR_AUTH_HEADER` and `PULSAR_AUTH_SCHEME`; an empty scheme sends the key
 bare.
 

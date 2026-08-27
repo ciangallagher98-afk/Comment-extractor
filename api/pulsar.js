@@ -3,10 +3,9 @@
 // The client's API key arrives per request from the browser and is used once to
 // sign the upstream call. It is never stored, never written to a log, and never
 // returned in a response — this file must stay that way.
-// Two different APIs. Searches are created on TRAC (v1), whose endpoint is
-// documented; content is pushed to the v2 pusher, whose endpoint is not, so it
-// has to be configured.
-const PULSAR_URL = process.env.PULSAR_GRAPHQL_URL;
+// Two different APIs: searches are created on TRAC (v1), content is pushed to
+// the interaction pusher. Both endpoints are known, and overridable.
+const PULSAR_URL = process.env.PULSAR_GRAPHQL_URL || "https://interaction-pusher.pulsarplatform.com/graphql";
 const TRAC_URL = process.env.PULSAR_TRAC_URL || "https://trac.pulsarplatform.com/graphql";
 const AUTH_HEADER = process.env.PULSAR_AUTH_HEADER || "Authorization";
 const AUTH_SCHEME = process.env.PULSAR_AUTH_SCHEME ?? "Bearer";
@@ -155,11 +154,6 @@ export default async function handler(req, res) {
             if (!cleanKeywords.length) return res.status(400).json({ error: 'Add at least one keyword for the new search.' });
 
             return res.status(200).json(await createSearch({ apiKey, name: cleanName, keywords: cleanKeywords }));
-        }
-        if (!PULSAR_URL) {
-            return res.status(500).json({
-                error: 'PULSAR_GRAPHQL_URL is not set on the server. Set it to the Pulsar GraphQL v2 pusher endpoint.'
-            });
         }
         if (!searchHash) return res.status(400).json({ error: 'Enter the search hash to push into.' });
         if (!MUTATIONS[mode]) return res.status(400).json({ error: 'mode must be "validate" or "store".' });
