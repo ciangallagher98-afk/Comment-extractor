@@ -154,6 +154,45 @@
                 </table>
             </div>
         </section>
+
+        <section id="pulsar-card" class="no-print card bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+            <h2 class="font-bold mb-1">Push to Pulsar as first-party data</h2>
+            <p class="text-slate-500 text-sm mb-5">
+                Sends these comments into an existing Pulsar search. Create the search in Pulsar first —
+                the pusher API cannot create one — then paste its search hash below.
+            </p>
+
+            <div class="grid md:grid-cols-2 gap-4 mb-4">
+                <label class="block">
+                    <span class="text-[10px] uppercase tracking-widest text-slate-400 font-black">Pulsar API key</span>
+                    <input id="pulsar-key" type="password" autocomplete="off" placeholder="Your API key"
+                           class="mt-1.5 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-indigo-400">
+                </label>
+                <label class="block">
+                    <span class="text-[10px] uppercase tracking-widest text-slate-400 font-black">Search hash</span>
+                    <input id="pulsar-search" type="text" autocomplete="off" placeholder="e.g. a1b2c3d4"
+                           class="mt-1.5 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-indigo-400">
+                </label>
+            </div>
+
+            <label class="flex items-center gap-2 text-sm text-slate-600 mb-4">
+                <input id="pulsar-include-post" type="checkbox" checked class="rounded border-slate-300">
+                Include the original post (pushed as type <code class="text-xs bg-slate-100 px-1 rounded">post</code>)
+            </label>
+
+            <div class="flex flex-wrap items-center gap-3">
+                <button id="pulsar-validate" class="text-indigo-600 text-[10px] font-black hover:bg-indigo-50 px-4 py-2.5 rounded-lg border border-indigo-100 transition-colors">VALIDATE ONLY</button>
+                <button id="pulsar-push" class="bg-indigo-600 text-white text-[10px] font-black px-5 py-2.5 rounded-lg hover:bg-indigo-700 transition-colors">PUSH TO PULSAR</button>
+                <span id="pulsar-count" class="text-xs text-slate-400"></span>
+            </div>
+
+            <div id="pulsar-result" class="hidden mt-4 text-sm rounded-xl p-4"></div>
+
+            <p class="text-xs text-slate-400 mt-4 leading-relaxed">
+                Your key is sent with the request and used once to sign the call to Pulsar. It is never stored on the
+                server and never logged. It is kept in this tab only, and cleared when you close it.
+            </p>
+        </section>
     </main>
 
     <div id="message" class="hidden card bg-white p-10 rounded-2xl shadow-sm border border-slate-200 text-center"></div>
@@ -321,6 +360,7 @@
 
         $('partial').classList.toggle('hidden', !result.truncated);
 
+        postData = result.post || null;
         renderPost(result.post);
         renderStats(result.stats || {});
         $('summary-text').textContent = result.summary || '';
@@ -328,6 +368,9 @@
         renderThemes(result.themes || []);
         renderStandout(result.standout || []);
         renderTable();
+
+        const pushable = buildInteractions().length;
+        $('pulsar-count').textContent = `${pushable} interaction${pushable === 1 ? '' : 's'} ready`;
     }
 
     function renderPost(post) {
@@ -434,6 +477,168 @@
             `;
         }).join('');
     }
+
+
+    // ── Pulsar first-party-data push ────────────────────────────
+    const PULSAR_CHUNK = 100;   // batches are all-or-nothing, so keep them modest
+    let postData = null;
+
+    // remoteId identifies a piece of content to Pulsar, so it must be stable:
+    // deriving it from the content means re-pushing the same thread updates those
+    // rows rather than duplicating them. A random UUID would duplicate every run,
+    // which is why this does not reuse the CSV's crypto.randomUUID().
+    function stableId(...parts) {
+        const s = parts.join('\u0000');
+        let h1 = 0x811c9dc5, h2 = 0x01000193;
+        for (let i = 0; i < s.length; i++) {
+            const c = s.charCodeAt(i);
+            h1 = Math.imul(h1 ^ c, 0x01000193) >>> 0;
+            h2 = Math.imul(h2 ^ c, 0x85ebca6b) >>> 0;
+        }
+        return h1.toString(16).padStart(8, '0') + h2.toString(16).padStart(8, '0');
+    }
+
+    const handle = name => {
+        const clean = String(name || 'unknown').trim();
+        return clean.startsWith('@') ? clean : '@' + clean.replace(/\s+/g, '');
+    };
+
+    function buildInteractions() {
+        const rows = [];
+
+        if ($('pulsar-include-post').checked && postData?.text) {
+            rows.push({
+                author: {
+                    name: postData.author || 'Unknown',
+                    screenName: handle(postData.author),
+                    remoteId: stableId('author', postData.author)
+                },
+                content: {
+                    body: postData.text,
+                    publishedAt: convertToISO(postData.timestamp),
+                    remoteId: stableId('post', postData.author, postData.text),
+                    counters: { likes: Number(postData.likes) || 0 },
+                    type: 'post'
+                }
+            });
+        }
+
+        // Image-only rows carry no body, and the pusher requires one — the same
+        // rows the CSV export drops.
+        currentData.filter(c => c.text !== '[Image/GIF Only]').forEach(c => {
+            rows.push({
+                author: {
+                    name: c.author || 'Unknown',
+                    screenName: handle(c.author),
+                    remoteId: stableId('author', c.author)
+                },
+                content: {
+                    body: c.text,
+                    publishedAt: convertToISO(c.timestamp),
+                    remoteId: stableId('comment', c.author, c.text, c.timestamp),
+                    counters: { likes: Number(c.likes) || 0 },
+                    type: 'comment'
+                }
+            });
+        });
+
+        return rows;
+    }
+
+    function pulsarResult(html, tone) {
+        const box = $('pulsar-result');
+        box.className = `mt-4 text-sm rounded-xl p-4 ${tone}`;
+        box.innerHTML = html;
+    }
+
+    const problemList = problems => `<ul class="mt-2 space-y-1 font-mono text-xs">${
+        problems.slice(0, 12).map(p => `<li>${esc(p)}</li>`).join('')
+    }</ul>${problems.length > 12 ? `<p class="mt-2 text-xs">…and ${problems.length - 12} more.</p>` : ''}`;
+
+    async function callPulsar(mode, interactions) {
+        const response = await fetch('/api/pulsar', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                apiKey: $('pulsar-key').value.trim(),
+                searchHash: $('pulsar-search').value.trim(),
+                mode,
+                interactions
+            })
+        });
+        const body = await response.json().catch(() => ({ error: `Server returned ${response.status}` }));
+        if (body.error) throw new Error(body.error);
+        return body;
+    }
+
+    const chunk = (arr, size) =>
+        Array.from({ length: Math.ceil(arr.length / size) }, (_, i) => arr.slice(i * size, i * size + size));
+
+    async function runPulsar(store) {
+        const rows = buildInteractions();
+        if (!rows.length) return pulsarResult('Nothing to push.', 'bg-slate-50 text-slate-600');
+
+        const batches = chunk(rows, PULSAR_CHUNK);
+        const buttons = [$('pulsar-validate'), $('pulsar-push')];
+        buttons.forEach(b => { b.disabled = true; b.classList.add('opacity-60'); });
+
+        try {
+            // Validate every batch before storing any. A batch is all-or-nothing,
+            // so this is what stops a later failure leaving a half-loaded search.
+            for (let i = 0; i < batches.length; i++) {
+                pulsarResult(`Validating batch ${i + 1} of ${batches.length}…`, 'bg-slate-50 text-slate-600');
+                const result = await callPulsar('validate', batches[i]);
+                if (!result.ok) {
+                    return pulsarResult(
+                        `<strong>Validation failed in batch ${i + 1} — nothing was pushed.</strong>${problemList(result.problems || [])}`,
+                        'bg-red-50 text-red-800 border border-red-200');
+                }
+            }
+
+            if (!store) {
+                return pulsarResult(
+                    `<strong>Valid.</strong> ${rows.length} interaction${rows.length === 1 ? '' : 's'} passed Pulsar's checks and are ready to push.`,
+                    'bg-emerald-50 text-emerald-800 border border-emerald-200');
+            }
+
+            let pushed = 0;
+            for (let i = 0; i < batches.length; i++) {
+                pulsarResult(`Pushing batch ${i + 1} of ${batches.length}…`, 'bg-slate-50 text-slate-600');
+                const result = await callPulsar('store', batches[i]);
+                if (!result.ok) {
+                    return pulsarResult(
+                        `<strong>Batch ${i + 1} failed after ${pushed} interaction${pushed === 1 ? '' : 's'} were already pushed.</strong>${problemList(result.problems || [])}`,
+                        'bg-red-50 text-red-800 border border-red-200');
+                }
+                pushed += result.count || batches[i].length;
+            }
+
+            pulsarResult(
+                `<strong>Pushed ${pushed} interaction${pushed === 1 ? '' : 's'}.</strong>
+                 Pulsar indexes and analyses first-party data after upload, so it will not be queryable immediately.`,
+                'bg-emerald-50 text-emerald-800 border border-emerald-200');
+
+        } catch (err) {
+            pulsarResult(`<strong>Push failed.</strong> ${esc(err.message)}`, 'bg-red-50 text-red-800 border border-red-200');
+        } finally {
+            buttons.forEach(b => { b.disabled = false; b.classList.remove('opacity-60'); });
+        }
+    }
+
+    $('pulsar-validate').onclick = () => runPulsar(false);
+    $('pulsar-push').onclick = () => runPulsar(true);
+
+    // Kept for this tab only, so a refresh does not mean retyping the key, and
+    // closing the tab discards it.
+    ['pulsar-key', 'pulsar-search'].forEach(id => {
+        try {
+            const saved = sessionStorage.getItem(id);
+            if (saved) $(id).value = saved;
+            $(id).addEventListener('input', () => {
+                try { sessionStorage.setItem(id, $(id).value); } catch { /* private mode */ }
+            });
+        } catch { /* storage unavailable */ }
+    });
 
     // ── CSV export (fields and UUID unchanged) ──────────────────
     // A leading =, +, - or @ makes Excel and Sheets treat the cell as a
