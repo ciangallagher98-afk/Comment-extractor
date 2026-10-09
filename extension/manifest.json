@@ -1,9 +1,12 @@
 {
   "manifest_version": 3,
   "name": "Comment Extractor",
-  "version": "0.1.0",
-  "description": "Collects a post and its comments from TikTok and Instagram and sends them to Comment Extractor for analysis.",
-  "permissions": ["storage", "activeTab"],
+  "version": "0.2.0",
+  "description": "Collects a post and its comments from TikTok, Instagram, Facebook, X, LinkedIn, YouTube, Threads, Bluesky and Reddit, and sends them to Comment Extractor.",
+  "permissions": [
+    "storage",
+    "activeTab"
+  ],
   "background": {
     "service_worker": "background.js"
   },
@@ -23,20 +26,72 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://www.tiktok.com/*", "https://www.instagram.com/*"],
-      "js": ["catcher.js"],
+      "matches": [
+        "https://www.tiktok.com/*",
+        "https://www.instagram.com/*",
+        "https://www.facebook.com/*",
+        "https://web.facebook.com/*",
+        "https://m.facebook.com/*",
+        "https://x.com/*",
+        "https://twitter.com/*",
+        "https://mobile.x.com/*",
+        "https://mobile.twitter.com/*",
+        "https://www.youtube.com/*",
+        "https://m.youtube.com/*",
+        "https://www.threads.com/*",
+        "https://www.threads.net/*",
+        "https://threads.com/*",
+        "https://threads.net/*"
+      ],
+      "js": [
+        "catcher.js"
+      ],
       "run_at": "document_start",
       "world": "MAIN"
     },
     {
-      "matches": ["https://www.tiktok.com/*", "https://www.instagram.com/*"],
-      "js": ["config.js", "platforms.js", "collector.js"],
+      "matches": [
+        "https://www.tiktok.com/*",
+        "https://www.instagram.com/*",
+        "https://www.facebook.com/*",
+        "https://web.facebook.com/*",
+        "https://m.facebook.com/*",
+        "https://x.com/*",
+        "https://twitter.com/*",
+        "https://mobile.x.com/*",
+        "https://mobile.twitter.com/*",
+        "https://www.youtube.com/*",
+        "https://m.youtube.com/*",
+        "https://www.threads.com/*",
+        "https://www.threads.net/*",
+        "https://threads.com/*",
+        "https://threads.net/*",
+        "https://www.linkedin.com/*",
+        "https://bsky.app/*",
+        "https://www.reddit.com/*",
+        "https://old.reddit.com/*",
+        "https://reddit.com/*",
+        "https://new.reddit.com/*"
+      ],
+      "js": [
+        "config.js",
+        "platforms.js",
+        "collector.js"
+      ],
       "run_at": "document_start"
     },
     {
-      "matches": ["https://comment-extractor-nine.vercel.app/*"],
-      "js": ["config.js", "bridge.js"],
+      "matches": [
+        "https://comment-extractor-nine.vercel.app/*"
+      ],
+      "js": [
+        "config.js",
+        "bridge.js"
+      ],
       "run_at": "document_idle"
     }
+  ],
+  "host_permissions": [
+    "https://public.api.bsky.app/*"
   ]
 }

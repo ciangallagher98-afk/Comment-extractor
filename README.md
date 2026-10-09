@@ -3,7 +3,8 @@
 Turns a social media comments section into structured, exportable data. Comments
 come in three ways:
 
-1. **Chrome extension** (TikTok, Instagram) — see [`extension/README.md`](extension/README.md).
+1. **Chrome extension** (TikTok, Instagram, Facebook, X, LinkedIn, YouTube,
+   Threads, Bluesky, Reddit) — see [`extension/README.md`](extension/README.md).
    It collects the post and every comment from the page and sends them here as
    text, so only sentiment and the summary need the model.
 2. **CSV import** — any CSV with an author and a comment-text column (column

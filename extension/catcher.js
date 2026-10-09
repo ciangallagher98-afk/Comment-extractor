@@ -11,9 +11,17 @@
 
     // A cheap first filter so only responses that could hold comments or post
     // details are passed on — not every image, feed or tracking call.
+    const X = ['"full_text"', '"rest_id"'];
+    const FACEBOOK = ['"__typename":"Comment"', '"__typename":"Story"'];
+    const YOUTUBE = ["commentEntityPayload"];
+    const THREADS = ["text_post_app_info"];
     const MARKERS = {
         "www.tiktok.com": ['"cid"', '"itemStruct"', '"aweme_detail"'],
-        "www.instagram.com": ["comment_like_count", "child_comment_count", '"caption"', "edge_media_to_parent_comment"]
+        "www.instagram.com": ["comment_like_count", "child_comment_count", '"caption"', "edge_media_to_parent_comment"],
+        "x.com": X, "twitter.com": X, "mobile.x.com": X, "mobile.twitter.com": X,
+        "www.facebook.com": FACEBOOK, "web.facebook.com": FACEBOOK, "m.facebook.com": FACEBOOK,
+        "www.youtube.com": YOUTUBE, "m.youtube.com": YOUTUBE,
+        "www.threads.com": THREADS, "www.threads.net": THREADS, "threads.com": THREADS, "threads.net": THREADS
     };
     const markers = MARKERS[location.hostname] || [];
     const MAX_BODY = 20 * 1024 * 1024;

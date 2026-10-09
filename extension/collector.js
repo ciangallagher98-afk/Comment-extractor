@@ -14,6 +14,7 @@
 
     // ── State ────────────────────────────────────────────────────────────
     const store = new Map();     // comment id -> comment
+    const postsByKey = new Map(); // Facebook / LinkedIn: candidate posts by post id
     let post = null;
     let seq = 0;
     let currentUrl = location.href;
@@ -24,14 +25,25 @@
 
     function resetForNewPost() {
         store.clear();
+        postsByKey.clear();
         post = null;
         seq = 0;
         postId = platform.postIdFromUrl(location.href);
     }
 
+    const mergePost = (into, next) => {
+        const merged = { ...(into || {}) };
+        for (const [k, v] of Object.entries(next)) {
+            if (v !== "" && v !== null && v !== undefined && !(v === 0 && merged[k])) merged[k] = v;
+        }
+        return merged;
+    };
+
     function absorb(result) {
-        if (result.post && (!post || result.post.text || !post.text)) {
-            post = { ...(post || {}), ...result.post };
+        const posts = [...(result.posts || []), ...(result.post ? [result.post] : [])];
+        for (const p of posts) {
+            if (p.groupKey) postsByKey.set(p.groupKey, mergePost(postsByKey.get(p.groupKey), p));
+            else post = mergePost(post, p);
         }
         for (const c of result.comments) {
             if (!c.id) continue;
@@ -47,6 +59,35 @@
             }
         }
         if (run) updatePanel();
+    }
+
+    // When comments carry a post id (Facebook, LinkedIn), the page may also have
+    // loaded comments from other posts. Keep the post with the most comments,
+    // which on a post's own page is always the post itself.
+    function dominantGroup() {
+        const tally = new Map();
+        for (const c of store.values()) if (c.groupKey) tally.set(c.groupKey, (tally.get(c.groupKey) || 0) + 1);
+        let best = null;
+        for (const [key, n] of tally) if (!best || n > tally.get(best)) best = key;
+        return best;
+    }
+
+    function relevant() {
+        const group = dominantGroup();
+        const all = Array.from(store.values());
+        return group ? all.filter(c => !c.groupKey || c.groupKey === group) : all;
+    }
+
+    function chosenPost() {
+        const group = dominantGroup();
+        if (group && postsByKey.has(group)) return mergePost(post, postsByKey.get(group));
+        if (post) return post;
+        return postsByKey.size === 1 ? Array.from(postsByKey.values())[0] : null;
+    }
+
+    function readPage() {
+        if (!platform.extractDom || !postId) return;
+        try { absorb(platform.extractDom(ctx())); } catch { /* page still loading */ }
     }
 
     function absorbText(text) {
@@ -177,9 +218,31 @@
         for (const el of scrollBoxes) {
             if (el.isConnected) el.scrollTop = el.scrollHeight;
         }
+        // Some sites load more comments as the whole page scrolls.
+        if (platform.scrollWindow) window.scrollTo(0, document.documentElement.scrollHeight);
+    }
+
+    // Some sites hide part of the thread behind a "Most relevant" filter. Open
+    // the filter menu and pick the option that shows everything.
+    async function switchSortOrder() {
+        const sw = platform.sortSwitch;
+        if (!sw) return;
+        const visibleText = (el, re) => re.test((el.innerText || "").trim()) && isVisible(el);
+        const opener = Array.from(document.querySelectorAll('[role="button"], button, span'))
+            .find(el => visibleText(el, sw.current));
+        if (!opener) return;
+        (opener.closest('[role="button"], button') || opener).click();
+        await sleep(1200);
+        const items = Array.from(document.querySelectorAll('[role="menuitem"], [role="menuitemradio"], [role="option"]'));
+        for (const re of sw.prefer) {
+            const item = items.find(el => visibleText(el, re));
+            if (item) { item.click(); await sleep(2500); return; }
+        }
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     }
 
     async function collectLoop() {
+        await switchSortOrder();
         const startedAt = Date.now();
         let idleTicks = 0;
         let tick = 0;
@@ -188,6 +251,7 @@
             if (tick % 5 === 0) findScrollBoxes();
             if (tick === 3 && store.size === 0) openCommentsTab();
 
+            readPage();
             const before = store.size;
             const clicks = clickExpanders();
             scrollComments();
@@ -198,9 +262,10 @@
             tick++;
 
             if (!run || run.state !== "running") return;
+            readPage();
             idleTicks = store.size === before && clicks === 0 ? idleTicks + 1 : 0;
 
-            if (store.size >= run.max) return finish("done", `Reached your limit of ${run.max.toLocaleString()} comments.`);
+            if (relevant().length >= run.max) return finish("done", `Reached your limit of ${run.max.toLocaleString()} comments.`);
             if (idleTicks >= 8) {
                 return store.size
                     ? finish("done", "No more comments are loading.")
@@ -217,11 +282,12 @@
     // goes straight after its parent, oldest first. The website relies on this
     // order to rebuild threads when it pushes to Pulsar.
     function assemble(max) {
-        const all = Array.from(store.values());
+        const all = relevant();
+        const ids = new Set(all.map(c => c.id));
         const tops = all.filter(c => !c.parentId).sort((a, b) => a.seq - b.seq);
         const byParent = new Map();
         for (const c of all) {
-            if (!c.parentId) continue;
+            if (!c.parentId || !ids.has(c.parentId)) continue;
             if (!byParent.has(c.parentId)) byParent.set(c.parentId, []);
             byParent.get(c.parentId).push(c);
         }
@@ -258,8 +324,10 @@
     }
 
     async function send() {
+        readPage();
         const comments = assemble(run?.max || CE_CONFIG.hardMax);
         if (!comments.length) return;
+        const post = chosenPost();
         const payload = {
             id: crypto.randomUUID(),
             version: 1,
@@ -282,7 +350,7 @@
         if (state === "done" || state === "stopped") {
             try {
                 await send();
-                run.message = `${message} Sent ${Math.min(store.size, run.max).toLocaleString()} comments to Comment Extractor.`;
+                run.message = `${message} Sent ${Math.min(relevant().length, run.max).toLocaleString()} comments to Comment Extractor.`;
                 run.state = "sent";
             } catch (error) {
                 run.message = `Couldn't send: ${error.message}. Try "Send again".`;
@@ -296,7 +364,24 @@
         if (run && run.state === "running") return;
         run = { state: "running", max: Math.min(Math.max(1, max || CE_CONFIG.defaultMax), CE_CONFIG.hardMax), message: "" };
         showPanel();
-        collectLoop();
+        if (platform.fetchAll) fetchWholeThread();
+        else collectLoop();
+    }
+
+    // Bluesky and Reddit publish the whole thread as data, so it's fetched in
+    // one go instead of scrolling.
+    async function fetchWholeThread() {
+        run.message = "Fetching the whole thread…";
+        updatePanel();
+        try {
+            const result = await platform.fetchAll(ctx(), run.max);
+            if (!run || run.state !== "running") return;
+            absorb(result);
+            if (!store.size) return finish("empty", "This post has no replies yet.");
+            finish("done", "Fetched the whole thread.");
+        } catch (error) {
+            finish("empty", error.message || "Couldn't fetch the thread.");
+        }
     }
 
     // ── 3. Progress panel ────────────────────────────────────────────────
@@ -366,11 +451,12 @@
 
     function updatePanel() {
         if (!panel || !run) return;
-        const collected = Math.min(store.size, run.max);
-        const expected = post?.commentCount ? Math.min(post.commentCount, run.max) : run.max;
+        const current = chosenPost();
+        const collected = Math.min(relevant().length, run.max);
+        const expected = current?.commentCount ? Math.min(current.commentCount, run.max) : run.max;
         panel.count.textContent = `${collected.toLocaleString()} comment${collected === 1 ? "" : "s"}`;
         panel.status.textContent = run.state === "running"
-            ? `Collecting from ${platform.name}${post?.commentCount ? ` · about ${post.commentCount.toLocaleString()} on this post` : ""}…`
+            ? `Collecting from ${platform.name}${current?.commentCount ? ` · about ${current.commentCount.toLocaleString()} on this post` : ""}…`
             : "";
         panel.fill.style.width = `${Math.min(100, (collected / Math.max(1, expected)) * 100)}%`;
         panel.message.textContent = run.message || "";
@@ -384,11 +470,12 @@
     // ── Messages from the toolbar popup ──────────────────────────────────
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (message?.type === "CE_STATUS") {
+            readPage();
             sendResponse({
                 platform: platform.name,
                 postId,
-                collected: store.size,
-                expected: post?.commentCount || null,
+                collected: relevant().length,
+                expected: chosenPost()?.commentCount || null,
                 running: run?.state === "running"
             });
         } else if (message?.type === "CE_START") {
