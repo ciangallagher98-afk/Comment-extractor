@@ -1,6 +1,21 @@
 # Comment-extractor
 
-Turns screenshots of a social media comments section into structured, exportable data.
+Turns a social media comments section into structured, exportable data. Comments
+come in three ways:
+
+1. **Chrome extension** (TikTok, Instagram) — see [`extension/README.md`](extension/README.md).
+   It collects the post and every comment from the page and sends them here as
+   text, so only sentiment and the summary need the model.
+2. **CSV import** — any CSV with an author and a comment-text column (column
+   names are matched loosely, so most exporters' files work as-is).
+3. **Screenshots** — for any other platform, as described below.
+
+Text input (1 and 2) is sent to `POST /api/process` with `mode: "comments"`.
+Sentiment is labelled in chunks of 250 comments, at most 4 calls at a time, and
+the summary / themes / standout picks come from a second call over a 400-comment
+sample (most-liked half plus an even spread), with theme mentions scaled back up
+to the full thread. Standout comments are referenced by number and filled from
+the real data, so they are always verbatim. Up to 2,000 comments per run.
 
 Upload one or more screenshots; a vision model reads them directly, extracts each
 comment with its author, text, like count and timestamp, scores sentiment, and

@@ -39,10 +39,12 @@
     <header class="card flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-6 rounded-2xl shadow-sm border border-slate-200 mb-6">
         <div>
             <h1 class="text-2xl font-bold tracking-tight">Social Analytics Pro</h1>
-            <p id="file-status" class="text-slate-500 text-sm mt-0.5">Upload screenshots of a comments section to begin</p>
+            <p id="file-status" class="text-slate-500 text-sm mt-0.5">Send comments from the Chrome extension, import a CSV, or upload screenshots</p>
         </div>
-        <div class="no-print flex items-center gap-3 shrink-0">
+        <div class="no-print flex flex-wrap items-center gap-3 shrink-0">
             <input type="file" id="upload" accept="image/*" multiple class="hidden">
+            <input type="file" id="csv-upload" accept=".csv,text/csv" class="hidden">
+            <button id="btn-csv" class="bg-slate-100 text-slate-700 px-5 py-2.5 rounded-xl font-semibold hover:bg-slate-200 transition-colors">Import CSV</button>
             <button id="btn-choose" class="bg-slate-100 text-slate-700 px-5 py-2.5 rounded-xl font-semibold hover:bg-slate-200 transition-colors">Choose Images</button>
             <button id="btn-run" class="hidden bg-indigo-600 text-white px-6 py-2.5 rounded-xl font-semibold hover:bg-indigo-700 shadow-sm transition-colors disabled:opacity-60">Analyze</button>
         </div>
@@ -54,6 +56,16 @@
             <span class="text-indigo-600 transition-transform group-open:rotate-90">▶</span>
             How to capture a full comments section
         </summary>
+        <div class="px-5 pb-2 pt-0 text-sm">
+            <div class="bg-indigo-50 border border-indigo-100 rounded-xl p-4 mb-2">
+                <h3 class="font-semibold text-indigo-900 mb-1">Fastest: the Comment Extractor Chrome extension</h3>
+                <p class="text-indigo-900/80">Open a TikTok or Instagram post, click the extension, and press <strong>Start collecting</strong>.
+                    It scrolls the comments for you, opens the replies, and sends everything here with exact text, likes and dates —
+                    no screenshots needed. Install steps are in the <code class="text-xs bg-white/70 px-1 rounded">extension</code> folder's README.</p>
+                <p class="text-indigo-900/80 mt-2">Already have comments in a spreadsheet? Use <strong>Import CSV</strong> — any file with columns for author and comment text works.</p>
+            </div>
+            <p class="text-slate-400 text-xs mt-3 mb-1">For other platforms, use screenshots:</p>
+        </div>
         <div class="px-5 pb-6 pt-0 grid md:grid-cols-2 gap-6 text-sm">
             <div>
                 <h3 class="text-[10px] uppercase tracking-widest text-slate-400 font-black mb-3">1 · Expand everything first</h3>
@@ -83,8 +95,8 @@
 
     <!-- ── Dropzone ───────────────────────────────────────────── -->
     <div id="dropzone" class="no-print border-2 border-dashed border-slate-300 rounded-2xl p-10 text-center text-slate-400 mb-6 transition-colors">
-        <p class="font-semibold text-slate-500">Drop screenshots here</p>
-        <p class="text-xs mt-1">or use “Choose Images” above · PNG or JPG · max 6</p>
+        <p class="font-semibold text-slate-500">Drop screenshots or a CSV here</p>
+        <p class="text-xs mt-1">or use the buttons above · PNG or JPG · max 6 images</p>
     </div>
 
     <!-- ── Results ────────────────────────────────────────────── -->
@@ -96,6 +108,7 @@
             <strong>Partial results.</strong> The model ran out of room before finishing, so the comments below
             stop early. Split the screenshots across two runs to capture the whole thread.
         </div>
+        <div id="warnings" class="hidden card bg-amber-50 border border-amber-200 rounded-2xl p-4 text-sm text-amber-900"></div>
 
         <section id="post-card" class="card hidden bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
             <h2 class="text-[10px] uppercase tracking-widest text-slate-400 font-black mb-3">Original Post</h2>
@@ -245,7 +258,10 @@
         dz.classList.remove('border-indigo-400', 'bg-indigo-50/40');
     }));
     dz.addEventListener('drop', e => {
-        setFiles(Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/')));
+        const files = Array.from(e.dataTransfer.files);
+        const csv = files.find(f => /\.csv$/i.test(f.name) || f.type === 'text/csv');
+        if (csv) return importCSV(csv);
+        setFiles(files.filter(f => f.type.startsWith('image/')));
     });
 
     function setFiles(files) {
@@ -287,6 +303,16 @@
         const date = new Date(analysisTime || new Date());
         const r = String(relative ?? '').trim().toLowerCase();
 
+        // The extension and most CSV exports carry real dates. Use them as-is
+        // rather than reading digits in them as "5m ago"-style labels.
+        if (/^\d{4}-\d{2}-\d{2}/.test(r) || /^[a-z]{3},? /.test(r)) {
+            const parsed = new Date(String(relative).trim());
+            if (!isNaN(parsed)) return parsed.toISOString();
+        }
+        if (/^\d{10}(\d{3})?$/.test(r)) {
+            return new Date(Number(r) * (r.length === 10 ? 1000 : 1)).toISOString();
+        }
+
         // Match the number and its unit together. "mo" is tested before the
         // single letters so "5mo" reads as months, not minutes.
         const match = r.match(/(\d+)\s*(mo|[smhdwy])/);
@@ -310,8 +336,147 @@
         $('message').innerHTML = html;
     }
 
+    // ── Comments that arrive as text (extension or CSV) ──────────
+    // No image reading is needed: the server only scores sentiment and writes
+    // the summary, then everything renders exactly as a screenshot run does.
+    const MAX_TEXT_COMMENTS = 2000;   // keep in sync with api/process.js
+    let sourceLabel = '';
+    let textRunActive = false;
+
+    async function analyseComments({ comments, post = null, label, url = '' }) {
+        if (textRunActive) return;
+        textRunActive = true;
+        analysisTime = new Date();
+        sourceLabel = label;
+        selectedFiles = [];
+        postData = null;
+        $('pulsar-name').value = '';
+        $('results').classList.add('hidden');
+        $('message').classList.remove('hidden');
+
+        const count = comments.length;
+        showMessage(`<p class="font-semibold text-indigo-500 animate-pulse">Scoring sentiment for ${num(count)} comment${count === 1 ? '' : 's'} from ${esc(label)}…</p>
+                     <p class="text-xs mt-2">Large threads take up to a minute.</p>`);
+
+        try {
+            const response = await fetch('/api/process', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mode: 'comments', comments, post, source: { label, url } })
+            });
+            const result = await response.json().catch(() => ({ error: `Server returned ${response.status}` }));
+            if (!response.ok || result.error) throw new Error(result.error || `Server returned ${response.status}`);
+
+            currentData = Array.isArray(result.comments) ? result.comments : [];
+            if (!currentData.length) {
+                showMessage('<p class="italic">No comments came through. Try collecting again.</p>');
+                return;
+            }
+            render(result);
+        } catch (err) {
+            showMessage(`<p class="font-semibold text-red-600">${esc(err.message)}</p>`, '');
+        } finally {
+            textRunActive = false;
+        }
+    }
+
+    // The extension's bridge script hands the collected thread to this page.
+    // Only messages from this same window are accepted.
+    let lastPayloadId = null;
+    window.addEventListener('message', event => {
+        if (event.source !== window || event.data?.type !== 'CE_EXTENSION_PAYLOAD') return;
+        const p = event.data.payload || {};
+        if (!Array.isArray(p.comments) || !p.comments.length || p.id === lastPayloadId) return;
+        lastPayloadId = p.id;
+        const platform = p.platformName
+            || (p.platform ? p.platform[0].toUpperCase() + p.platform.slice(1) : 'the extension');
+        analyseComments({ comments: p.comments, post: p.post || null, label: platform, url: p.url || '' });
+    });
+    // In case the bridge script loaded first, ask it to send again.
+    window.postMessage({ type: 'CE_PAGE_READY' }, location.origin);
+
+    // ── CSV import ───────────────────────────────────────────────
+    // A small RFC 4180 parser: quoted fields, escaped quotes, commas and
+    // newlines inside quotes.
+    function parseCSV(text) {
+        const rows = [];
+        let row = [], field = '', quoted = false;
+        const src = text.replace(/^﻿/, '');
+        for (let i = 0; i < src.length; i++) {
+            const ch = src[i];
+            if (quoted) {
+                if (ch === '"' && src[i + 1] === '"') { field += '"'; i++; }
+                else if (ch === '"') quoted = false;
+                else field += ch;
+            } else if (ch === '"') quoted = true;
+            else if (ch === ',') { row.push(field); field = ''; }
+            else if (ch === '\n' || ch === '\r') {
+                if (ch === '\r' && src[i + 1] === '\n') i++;
+                row.push(field); rows.push(row); row = []; field = '';
+            } else field += ch;
+        }
+        if (field || row.length) { row.push(field); rows.push(row); }
+        return rows.filter(r => r.some(cell => cell.trim()));
+    }
+
+    // Column names differ between exporters, so match on common variants.
+    const CSV_COLUMNS = {
+        author: ['screen name', 'author', 'username', 'user name', 'user', 'name', 'handle', 'commenter', 'profile'],
+        text: ['content', 'text', 'comment', 'comment text', 'body', 'message', 'comments'],
+        likes: ['likes', 'like count', 'likes count', 'digg count', 'reactions', 'upvotes', 'score'],
+        timestamp: ['publishedat', 'published at', 'timestamp', 'date', 'created at', 'created', 'time', 'posted at', 'comment date'],
+        isReply: ['isreply', 'is reply', 'reply', 'type', 'comment type']
+    };
+
+    function importCSV(file) {
+        const reader = new FileReader();
+        reader.onload = () => {
+            const rows = parseCSV(String(reader.result || ''));
+            if (rows.length < 2) {
+                return showMessage('<p class="font-semibold text-red-600">That CSV has no data rows.</p>', '');
+            }
+            const header = rows[0].map(h => h.trim().toLowerCase().replace(/[_-]+/g, ' '));
+            const col = {};
+            for (const [key, names] of Object.entries(CSV_COLUMNS)) {
+                col[key] = header.findIndex(h => names.includes(h));
+            }
+            if (col.text < 0) {
+                $('message').classList.remove('hidden');
+                return showMessage(`<p class="font-semibold text-red-600">Couldn't find a comment text column.</p>
+                    <p class="text-xs mt-2">Columns found: ${esc(rows[0].join(', '))}. Rename the comment column to "Content" and try again.</p>`, '');
+            }
+            const cell = (r, key) => (col[key] >= 0 ? String(r[col[key]] ?? '').trim() : '');
+            const comments = rows.slice(1).map(r => ({
+                author: cell(r, 'author').replace(/^'(?=[=+\-@])/, '') || 'Unknown',
+                text: cell(r, 'text').replace(/^'(?=[=+\-@])/, ''),
+                likes: cell(r, 'likes') || 0,
+                timestamp: cell(r, 'timestamp'),
+                isReply: /^(true|yes|1|reply)$/i.test(cell(r, 'isReply'))
+            })).filter(c => c.text);
+
+            if (!comments.length) {
+                $('message').classList.remove('hidden');
+                return showMessage('<p class="font-semibold text-red-600">No comment text found in that CSV.</p>', '');
+            }
+            if (comments.length > MAX_TEXT_COMMENTS) {
+                comments.length = MAX_TEXT_COMMENTS;
+            }
+            analyseComments({ comments, label: file.name });
+        };
+        reader.onerror = () => showMessage('<p class="font-semibold text-red-600">Could not read that file.</p>', '');
+        reader.readAsText(file);
+    }
+
+    $('btn-csv').onclick = () => $('csv-upload').click();
+    $('csv-upload').onchange = e => {
+        const file = e.target.files[0];
+        e.target.value = '';
+        if (file) importCSV(file);
+    };
+
     async function startAnalysis() {
         const btn = $('btn-run');
+        sourceLabel = '';
         analysisTime = new Date();
         btn.disabled = true;
         $('results').classList.add('hidden');
@@ -363,10 +528,14 @@
         const when = (analysisTime || new Date()).toLocaleString(undefined,
             { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
         const n = currentData.length;
-        $('file-status').textContent =
-            `${n} comment${n === 1 ? '' : 's'} from ${selectedFiles.length || 'uploaded'} screenshot${selectedFiles.length === 1 ? '' : 's'} · ${when}`;
+        const from = sourceLabel
+            || `${selectedFiles.length || 'uploaded'} screenshot${selectedFiles.length === 1 ? '' : 's'}`;
+        $('file-status').textContent = `${n} comment${n === 1 ? '' : 's'} from ${from} · ${when}`;
 
         $('partial').classList.toggle('hidden', !result.truncated);
+        const warnings = Array.isArray(result.warnings) ? result.warnings : [];
+        $('warnings').classList.toggle('hidden', !warnings.length);
+        $('warnings').innerHTML = warnings.map(w => `<p>${esc(w)}</p>`).join('');
 
         postData = result.post || null;
         renderPost(result.post);

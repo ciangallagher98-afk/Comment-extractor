@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body { font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; width: 290px; margin: 0;
+               color: #0f172a; background: #fff; }
+        .wrap { padding: 16px; }
+        h1 { font-size: 15px; margin: 0 0 4px; }
+        .muted { color: #64748b; font-size: 12px; }
+        .pill { display: inline-block; background: #eef2ff; color: #4338ca; font-weight: 600; font-size: 11px;
+                border-radius: 999px; padding: 2px 8px; margin-top: 8px; }
+        label { display: block; margin-top: 14px; font-size: 11px; font-weight: 700; color: #64748b;
+                text-transform: uppercase; letter-spacing: .05em; }
+        input { width: 100%; box-sizing: border-box; margin-top: 6px; border: 1px solid #e2e8f0; border-radius: 9px;
+                padding: 8px 10px; font-size: 13px; }
+        button { width: 100%; margin-top: 14px; border: 0; border-radius: 10px; padding: 10px; font-weight: 600;
+                 font-size: 13px; cursor: pointer; background: #4f46e5; color: #fff; }
+        button.ghost { background: #f1f5f9; color: #334155; }
+        .note { margin-top: 12px; padding: 10px; border-radius: 9px; background: #f8fafc; color: #475569; font-size: 12px; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <h1>Comment Extractor</h1>
+    <div id="intro" class="muted">Checking this page…</div>
+
+    <div id="ready" class="hidden">
+        <span id="platform" class="pill"></span>
+        <label for="max">Collect up to</label>
+        <input id="max" type="number" min="1" max="2000" step="50">
+        <div class="muted" style="margin-top:6px">comments (maximum 2,000)</div>
+        <button id="start">Start collecting</button>
+        <div class="note">Keep this tab open while it runs. A panel in the corner of the page shows progress, and the
+            results open in Comment Extractor when it's done.</div>
+    </div>
+
+    <div id="reload" class="hidden">
+        <div class="note">This page was open before the extension was installed or updated. Reload it once, then click
+            the extension again.</div>
+        <button id="reload-btn">Reload this page</button>
+    </div>
+
+    <button id="open-tool" class="ghost">Open Comment Extractor</button>
+</div>
+<script src="config.js"></script>
+<script src="popup.js"></script>
+</body>
+</html>

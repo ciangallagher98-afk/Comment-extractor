@@ -418,12 +418,213 @@ async function diagnose(req, res) {
     return res.status(200).json(payload);
 }
 
+// ── Text mode: comments already collected (browser extension or CSV) ──────
+// The extension reads exact text, authors, likes and timestamps straight from
+// the platform, so the model is not asked to transcribe anything here. It only
+// does the two jobs that need judgement: a sentiment label per comment, and the
+// summary / themes / standout picks. Counts stay arithmetic, as in normalise().
+const MAX_TEXT_COMMENTS = 2000;
+const SENTIMENT_CHUNK = 250;     // labels per model call
+const MAX_CONCURRENT = 4;        // keeps a free-tier key under its per-minute cap
+const INSIGHT_SAMPLE = 400;      // comments shown to the summary call
+const LABEL_TO_SENTIMENT = { P: "Positive", N: "Negative", U: "Neutral" };
+
+// Gemini 2.5 spends output tokens and wall-clock time reasoning before it
+// writes anything, which is wasted on these tasks — so ask for none. Providers
+// that reject either option answer 400, and each rung drops one and retries.
+const OPTION_LADDER = [
+    { response_format: { type: "json_object" }, reasoning_effort: "none" },
+    { response_format: { type: "json_object" } },
+    {}
+];
+
+async function callWithLadder(request, budgetMs) {
+    for (let i = 0; i < OPTION_LADDER.length; i++) {
+        try {
+            return await callChat({ ...request, ...OPTION_LADDER[i] }, budgetMs);
+        } catch (err) {
+            const isLast = i === OPTION_LADDER.length - 1;
+            if (err?.status !== 400 || isLast) throw err;
+        }
+    }
+}
+
+// Runs async tasks with at most `limit` in flight, preserving result order.
+async function runLimited(tasks, limit) {
+    const results = new Array(tasks.length);
+    let next = 0;
+    async function worker() {
+        while (next < tasks.length) {
+            const i = next++;
+            results[i] = await tasks[i]();
+        }
+    }
+    await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, worker));
+    return results;
+}
+
+const oneLine = (s, max) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, max);
+
+async function labelChunk(postText, chunk) {
+    const lines = chunk.map((c, i) => `${i + 1}. ${oneLine(c.text, 500) || "(no text)"}`).join("\n");
+    const prompt = `Classify the sentiment of each numbered social media comment.
+Use exactly one letter per comment: P = positive, N = negative, U = neutral.
+Judge each comment on its own text, reading sarcasm by its intended meaning. Plain questions, tags of other users, and factual statements are U.
+${postText ? `For context, the post being commented on says: "${oneLine(postText, 300)}"\n` : ""}
+Comments:
+${lines}
+
+Return ONLY a JSON object with exactly ${chunk.length} labels, in the same order: {"labels":["P","U","N"]}`;
+
+    try {
+        const completion = await callWithLadder({
+            model: MODEL,
+            temperature: 0,
+            max_tokens: 4000,
+            messages: [{ role: "user", content: prompt }]
+        }, 30_000);
+        const { value } = parseJSON(completion.choices?.[0]?.message?.content);
+        const labels = Array.isArray(value?.labels) ? value.labels : [];
+        const complete = labels.length === chunk.length;
+        return {
+            complete,
+            sentiments: chunk.map((_, i) =>
+                LABEL_TO_SENTIMENT[String(labels[i] ?? "").trim().toUpperCase().charAt(0)] || "Neutral")
+        };
+    } catch {
+        // One failed chunk should not lose the whole run: those comments stay
+        // Neutral and the response is flagged so the page can say so.
+        return { complete: false, sentiments: chunk.map(() => "Neutral") };
+    }
+}
+
+// The summary call sees every comment on small threads. On large ones it sees
+// the most-liked half of the sample plus an even spread of the rest, so quiet
+// corners of the thread still count.
+function pickSample(comments) {
+    const indexed = comments.map((c, i) => ({ ...c, n: i + 1 })).filter(c => c.text !== "[Image/GIF Only]");
+    if (indexed.length <= INSIGHT_SAMPLE) return indexed;
+
+    const top = [...indexed].sort((a, b) => b.likes - a.likes).slice(0, INSIGHT_SAMPLE / 2);
+    const taken = new Set(top.map(c => c.n));
+    const rest = indexed.filter(c => !taken.has(c.n));
+    const step = rest.length / (INSIGHT_SAMPLE / 2);
+    const spread = Array.from({ length: INSIGHT_SAMPLE / 2 }, (_, i) => rest[Math.floor(i * step)]).filter(Boolean);
+    return [...top, ...spread].sort((a, b) => a.n - b.n);
+}
+
+async function insightCall(post, sample) {
+    const lines = sample.map(c =>
+        `#${c.n} [${c.sentiment}] [${c.likes} likes] ${c.isReply ? "(reply) " : ""}@${oneLine(c.author, 40)}: ${oneLine(c.text, 400)}`
+    ).join("\n");
+
+    const prompt = `You are analysing the comments section of a social media post. Each comment is shown with its number, sentiment label and like count.
+${post?.text ? `\nThe post by @${oneLine(post.author, 40)} says: "${oneLine(post.text, 800)}"\n` : ""}
+Comments:
+${lines}
+
+Return ONLY a JSON object:
+{
+  "summary": "2-3 sentences on what the conversation is actually about, including any dominant themes or disagreements.",
+  "themes": [{ "label": "2-4 words", "mentions": 0, "sentiment": "Positive|Negative|Neutral" }],
+  "standout": [{ "n": 0, "why": "short phrase, e.g. most liked, sharpest criticism" }]
+}
+Rules: "themes" is 3 to 6 recurring topics people are TALKING ABOUT (not how they feel), with "mentions" = how many of the comments above touch it and "sentiment" = the dominant sentiment of those comments, ordered by mentions. "standout" is up to 3 comments that best represent the conversation, referenced by their # number.`;
+
+    const completion = await callWithLadder({
+        model: MODEL,
+        temperature: 0.2,
+        max_tokens: 3000,
+        messages: [{ role: "user", content: prompt }]
+    }, 40_000);
+    return parseJSON(completion.choices?.[0]?.message?.content).value;
+}
+
+async function analyseCommentText(body) {
+    const raw = Array.isArray(body?.comments) ? body.comments : [];
+    const comments = raw.slice(0, MAX_TEXT_COMMENTS).map(c => ({
+        author: oneLine(c?.author || "Unknown", 120),
+        text: String(c?.text ?? "").trim() || "[Image/GIF Only]",
+        likes: parseLikes(c?.likes),
+        timestamp: String(c?.timestamp ?? ""),
+        isReply: Boolean(c?.isReply)
+    }));
+    const post = body?.post && typeof body.post === "object" && (body.post.text || body.post.author) ? {
+        author: oneLine(body.post.author || "Unknown", 120),
+        text: String(body.post.text ?? ""),
+        likes: parseLikes(body.post.likes),
+        timestamp: String(body.post.timestamp ?? "")
+    } : null;
+
+    // Image-only comments need no model call; everything else is labelled in chunks.
+    const textual = comments.map((c, i) => ({ c, i })).filter(x => x.c.text !== "[Image/GIF Only]");
+    const chunks = [];
+    for (let i = 0; i < textual.length; i += SENTIMENT_CHUNK) chunks.push(textual.slice(i, i + SENTIMENT_CHUNK));
+
+    const labelled = await runLimited(
+        chunks.map(chunk => () => labelChunk(post?.text, chunk.map(x => x.c))), MAX_CONCURRENT);
+
+    comments.forEach(c => { c.sentiment = "Neutral"; });
+    labelled.forEach((result, k) => {
+        chunks[k].forEach((x, j) => { comments[x.i].sentiment = result.sentiments[j]; });
+    });
+    const sentimentIncomplete = labelled.some(r => !r.complete);
+
+    // Summary, themes and standout are a second pass so they can lean on the labels.
+    const sample = pickSample(comments);
+    let insights = {};
+    let insightsFailed = false;
+    if (sample.length) {
+        try {
+            insights = await insightCall(post, sample);
+        } catch {
+            insightsFailed = true;
+        }
+    }
+
+    // Mentions were counted within the sample; scale them back up to the thread.
+    const scale = sample.length ? textual.length / sample.length : 1;
+    const themes = (Array.isArray(insights?.themes) ? insights.themes : [])
+        .map(t => ({ ...t, mentions: Math.round((Number(t?.mentions) || 0) * scale) }));
+
+    // Standout comments are referenced by number and filled from the real data,
+    // so their text is always verbatim.
+    const standout = (Array.isArray(insights?.standout) ? insights.standout : [])
+        .map(s => {
+            const c = comments[(Number(s?.n) || 0) - 1];
+            return c ? { author: c.author, text: c.text, why: s?.why } : null;
+        })
+        .filter(Boolean);
+
+    const warnings = [];
+    if (raw.length > MAX_TEXT_COMMENTS) warnings.push(`Only the first ${MAX_TEXT_COMMENTS.toLocaleString()} of ${raw.length.toLocaleString()} comments were analysed.`);
+    if (sentimentIncomplete) warnings.push("Some comments could not be scored and are shown as Neutral. Running the analysis again usually fixes this.");
+    if (insightsFailed) warnings.push("The summary and themes could not be generated this time. The table and sentiment are still complete.");
+
+    return {
+        ...normalise({ post, comments, summary: insights?.summary, themes, standout }),
+        truncated: false,
+        warnings
+    };
+}
+
 export default async function handler(req, res) {
     if (req.method === 'GET') return diagnose(req, res);
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
 
     if (!API_KEY) {
         return res.status(500).json({ error: 'VISION_API_KEY is not set on the server.' });
+    }
+
+    if (req.body?.mode === 'comments') {
+        try {
+            if (!Array.isArray(req.body.comments) || !req.body.comments.length) {
+                return res.status(400).json({ error: 'Send a non-empty "comments" array.' });
+            }
+            return res.status(200).json(await analyseCommentText(req.body));
+        } catch (error) {
+            return res.status(500).json({ error: describeError(error), model: MODEL });
+        }
     }
 
     try {
@@ -457,27 +658,7 @@ export default async function handler(req, res) {
             }]
         };
 
-        // Gemini 2.5 spends output tokens and wall-clock time reasoning before it
-        // writes anything, which is wasted on faithful transcription and was
-        // pushing runs past the timeout — so ask for none. Providers that reject
-        // either option answer 400, and each rung drops one and retries; a 400
-        // comes back fast, so the ladder costs little.
-        const OPTION_LADDER = [
-            { response_format: { type: "json_object" }, reasoning_effort: "none" },
-            { response_format: { type: "json_object" } },
-            {}
-        ];
-
-        let completion;
-        for (let i = 0; i < OPTION_LADDER.length; i++) {
-            try {
-                completion = await callChat({ ...request, ...OPTION_LADDER[i] });
-                break;
-            } catch (err) {
-                const isLast = i === OPTION_LADDER.length - 1;
-                if (err?.status !== 400 || isLast) throw err;
-            }
-        }
+        const completion = await callWithLadder(request);
 
         const choice = completion.choices?.[0];
         const { value, repaired } = parseJSON(choice?.message?.content);
