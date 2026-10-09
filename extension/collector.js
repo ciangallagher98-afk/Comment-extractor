@@ -350,7 +350,7 @@
         if (state === "done" || state === "stopped") {
             try {
                 await send();
-                run.message = `${message} Sent ${Math.min(relevant().length, run.max).toLocaleString()} comments to Comment Extractor.`;
+                run.message = `${message} Sent ${Math.min(relevant().length, run.max).toLocaleString()} comments — Comment Extractor has opened in a new tab and is analysing them now.`;
                 run.state = "sent";
             } catch (error) {
                 run.message = `Couldn't send: ${error.message}. Try "Send again".`;

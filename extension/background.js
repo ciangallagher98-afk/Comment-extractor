@@ -8,7 +8,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     chrome.storage.local
         .set({ cePending: { payload: message.payload, at: Date.now() } })
-        .then(() => chrome.tabs.create({ url: CE_CONFIG.toolUrl }))
+        // ?source=extension tells the page to show its progress card straight away.
+        .then(() => chrome.tabs.create({ url: `${CE_CONFIG.toolUrl}?source=extension` }))
         .then(() => sendResponse({ ok: true }))
         .catch(error => sendResponse({ ok: false, error: String(error?.message || error) }));
 

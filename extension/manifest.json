@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Comment Extractor",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Collects a post and its comments from TikTok, Instagram, Facebook, X, LinkedIn, YouTube, Threads, Bluesky and Reddit, and sends them to Comment Extractor.",
   "permissions": [
     "storage",

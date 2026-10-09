@@ -53,6 +53,31 @@
         </div>
     </header>
 
+    <!-- ── Progress (shown while comments are received and analysed) ── -->
+    <section id="progress" class="no-print hidden card bg-white rounded-2xl shadow-sm border-2 border-indigo-200 p-6 md:p-8 mb-6" role="status" aria-live="polite">
+        <div class="flex items-start gap-4">
+            <div id="progress-icon" class="shrink-0 w-11 h-11 rounded-full bg-indigo-50 flex items-center justify-center">
+                <svg class="animate-spin w-6 h-6 text-indigo-600" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" class="opacity-20"></circle>
+                    <path d="M22 12a10 10 0 0 0-10-10" stroke="currentColor" stroke-width="3" stroke-linecap="round"></path>
+                </svg>
+            </div>
+            <div class="min-w-0 flex-1">
+                <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                    <h2 id="progress-title" class="text-xl font-bold text-slate-800">Working…</h2>
+                    <span id="progress-time" class="text-sm text-slate-400 tabular-nums"></span>
+                </div>
+                <p id="progress-subtitle" class="text-sm text-slate-500 mt-0.5"></p>
+                <div class="mt-5 h-3 bg-slate-100 rounded-full overflow-hidden">
+                    <div id="progress-bar" class="h-full w-0 bg-indigo-600 rounded-full transition-[width] duration-700 ease-out"></div>
+                </div>
+                <ol id="progress-stages" class="mt-5 space-y-2.5 text-sm"></ol>
+                <p id="progress-note" class="mt-5 text-xs text-slate-400">You can switch to another tab — this tab's title shows when it's finished.</p>
+                <div id="progress-actions" class="hidden mt-5 flex flex-wrap gap-2"></div>
+            </div>
+        </div>
+    </section>
+
     <!-- ── Capture guide ──────────────────────────────────────── -->
     <details id="guide" open class="no-print card bg-white rounded-2xl shadow-sm border border-slate-200 mb-6 group">
         <summary class="cursor-pointer select-none p-5 font-semibold flex items-center gap-2 list-none">
@@ -426,6 +451,96 @@
         $('message').innerHTML = html;
     }
 
+    // ── Progress card ────────────────────────────────────────────
+    // A run is one server request, so progress within it is estimated from the
+    // number of comments; stages advance on that estimate and the bar only
+    // reaches 100% when the results actually arrive.
+    const PAGE_TITLE = document.title;
+    const Progress = (() => {
+        let stages = [], current = 0, started = 0, estimate = 0, timer = null, stageTimers = [];
+        const fmt = ms => { const s = Math.round(ms / 1000); return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`; };
+        const icon = state => state === 'done'
+            ? '<span class="w-5 h-5 rounded-full bg-emerald-500 text-white text-[11px] font-bold flex items-center justify-center">✓</span>'
+            : state === 'active'
+                ? '<span class="w-5 h-5 rounded-full border-2 border-indigo-600 border-t-transparent animate-spin"></span>'
+                : '<span class="w-5 h-5 rounded-full border-2 border-slate-200"></span>';
+        function drawStages() {
+            $('progress-stages').innerHTML = stages.map((label, i) => {
+                const state = i < current ? 'done' : i === current ? 'active' : 'todo';
+                const tone = state === 'done' ? 'text-slate-500' : state === 'active' ? 'text-slate-800 font-semibold' : 'text-slate-400';
+                return `<li class="flex items-center gap-3 ${tone}">${icon(state)}<span>${esc(label)}</span></li>`;
+            }).join('');
+        }
+        function tick() {
+            const elapsed = Date.now() - started;
+            $('progress-time').textContent = fmt(elapsed);
+            // Eases towards 92% over the estimate; never claims to be finished.
+            const fraction = estimate ? Math.min(0.92, 1 - Math.exp(-2.3 * elapsed / estimate)) : 0;
+            $('progress-bar').style.width = `${Math.max(4, fraction * 100)}%`;
+            document.title = `${Math.round(fraction * 100)}% · ${$('progress-title').textContent}`;
+        }
+        function setIcon(kind) {
+            $('progress-icon').className = `shrink-0 w-11 h-11 rounded-full flex items-center justify-center ${kind === 'error' ? 'bg-red-50' : 'bg-indigo-50'}`;
+            $('progress-icon').innerHTML = kind === 'error'
+                ? '<span class="text-red-600 text-xl font-bold">!</span>'
+                : '<svg class="animate-spin w-6 h-6 text-indigo-600" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" class="opacity-20"></circle><path d="M22 12a10 10 0 0 0-10-10" stroke="currentColor" stroke-width="3" stroke-linecap="round"></path></svg>';
+        }
+        function clearTimers() { clearInterval(timer); stageTimers.forEach(clearTimeout); stageTimers = []; }
+        return {
+            // schedule: when each later stage should begin, as fractions of the estimate.
+            start({ title, subtitle = '', stages: list, estimateMs = 15000, schedule = [] }) {
+                clearTimers();
+                stages = list; current = 0; started = Date.now(); estimate = estimateMs;
+                $('progress').classList.remove('hidden');
+                $('progress').classList.replace('border-red-200', 'border-indigo-200');
+                $('progress-title').textContent = title;
+                $('progress-subtitle').textContent = subtitle;
+                $('progress-note').classList.remove('hidden');
+                $('progress-actions').classList.add('hidden');
+                $('progress-bar').className = 'h-full bg-indigo-600 rounded-full transition-[width] duration-700 ease-out';
+                setIcon('working');
+                // Nothing else competes for attention while it works.
+                $('guide').classList.add('hidden');
+                $('dropzone').classList.add('hidden');
+                $('results').classList.add('hidden');
+                $('message').classList.add('hidden');
+                schedule.forEach((at, i) => stageTimers.push(setTimeout(() => this.stage(i + 1), at * estimateMs)));
+                drawStages(); tick();
+                timer = setInterval(tick, 250);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            },
+            update({ title, subtitle } = {}) {
+                if (title) $('progress-title').textContent = title;
+                if (subtitle !== undefined) $('progress-subtitle').textContent = subtitle;
+            },
+            stage(i) { if (i > current && i < stages.length) { current = i; drawStages(); } },
+            done(summary) {
+                clearTimers();
+                current = stages.length; drawStages();
+                $('progress-bar').style.width = '100%';
+                document.title = `✓ ${summary} · ${PAGE_TITLE}`;
+                setTimeout(() => $('progress').classList.add('hidden'), 600);
+            },
+            fail(message, actionsHtml = '') {
+                clearTimers();
+                $('progress').classList.replace('border-indigo-200', 'border-red-200');
+                setIcon('error');
+                $('progress-title').textContent = 'Something went wrong';
+                $('progress-subtitle').textContent = message;
+                $('progress-bar').className = 'h-full bg-red-400 rounded-full';
+                $('progress-note').classList.add('hidden');
+                $('progress-actions').innerHTML = actionsHtml || '<button onclick="location.reload()" class="bg-slate-100 text-slate-700 px-4 py-2 rounded-xl font-semibold text-sm hover:bg-slate-200">Start again</button>';
+                $('progress-actions').classList.remove('hidden');
+                document.title = `Problem · ${PAGE_TITLE}`;
+                $('guide').classList.remove('hidden');
+            },
+            hide() { clearTimers(); $('progress').classList.add('hidden'); document.title = PAGE_TITLE; }
+        };
+    })();
+
+    // Rough time for a text run: sentiment chunks of 250, four at a time, then the summary.
+    const estimateTextMs = n => 6000 + Math.ceil(Math.ceil(n / 250) / 4) * 7000 + 6000;
+
     // ── Comments that arrive as text (extension or CSV) ──────────
     // No image reading is needed: the server only scores sentiment and writes
     // the summary, then everything renders exactly as a screenshot run does.
@@ -441,12 +556,23 @@
         selectedFiles = [];
         postData = null;
         $('pulsar-name').value = '';
-        $('results').classList.add('hidden');
-        $('message').classList.remove('hidden');
+        clearTimeout(waitingForExtension);
 
         const count = comments.length;
-        showMessage(`<p class="font-semibold text-indigo-500 animate-pulse">Scoring sentiment for ${num(count)} comment${count === 1 ? '' : 's'} from ${esc(label)}…</p>
-                     <p class="text-xs mt-2">Large threads take up to a minute.</p>`);
+        const fromExtension = !/\.csv$/i.test(label);
+        const estimateMs = estimateTextMs(count);
+        Progress.start({
+            title: `Analysing ${num(count)} comment${count === 1 ? '' : 's'}`,
+            subtitle: fromExtension ? `Collected from ${label}${post?.author ? ` · post by ${post.author}` : ''}` : `Imported from ${label}`,
+            stages: [
+                fromExtension ? `Received ${num(count)} comments from ${label}` : `Read ${num(count)} comments from the file`,
+                'Scoring sentiment and flagging questions & complaints',
+                'Finding themes and mentions, and writing the insight brief',
+                'Building your dashboard'
+            ],
+            estimateMs,
+            schedule: [0.04, 0.55, 0.95]
+        });
 
         try {
             const response = await fetch('/api/process', {
@@ -459,12 +585,13 @@
 
             currentData = Array.isArray(result.comments) ? result.comments : [];
             if (!currentData.length) {
-                showMessage('<p class="italic">No comments came through. Try collecting again.</p>');
+                Progress.fail('No comments came through. Go back to the post and try collecting again.');
                 return;
             }
+            Progress.done(`${num(currentData.length)} comment${currentData.length === 1 ? '' : 's'}`);
             render(result);
         } catch (err) {
-            showMessage(`<p class="font-semibold text-red-600">${esc(err.message)}</p>`, '');
+            Progress.fail(err.message);
         } finally {
             textRunActive = false;
         }
@@ -482,6 +609,21 @@
             || (p.platform ? p.platform[0].toUpperCase() + p.platform.slice(1) : 'the extension');
         analyseComments({ comments: p.comments, post: p.post || null, label: platform, url: p.url || '' });
     });
+    // The extension opens this page with ?source=extension, so the progress card
+    // can appear the moment the page loads, before the comments are handed over.
+    let waitingForExtension = null;
+    if (new URLSearchParams(location.search).get('source') === 'extension') {
+        history.replaceState(null, '', location.pathname);
+        Progress.start({
+            title: 'Receiving comments from the extension',
+            subtitle: 'Hold on — this only takes a moment.',
+            stages: ['Receiving comments from the extension', 'Scoring sentiment and flagging questions & complaints',
+                'Finding themes and mentions, and writing the insight brief', 'Building your dashboard'],
+            estimateMs: 30000
+        });
+        waitingForExtension = setTimeout(() => Progress.fail(
+            "No comments arrived from the extension. Go back to the post's tab and press “Send again” in the Comment Extractor panel."), 15000);
+    }
     // In case the bridge script loaded first, ask it to send again.
     window.postMessage({ type: 'CE_PAGE_READY' }, location.origin);
 
@@ -570,7 +712,7 @@
         reader.onload = () => {
             const rows = parseCSV(String(reader.result || ''));
             if (rows.length < 2) {
-                return showMessage('<p class="font-semibold text-red-600">That CSV has no data rows.</p>', '');
+                return Progress.fail('That CSV has no data rows.');
             }
             const header = rows[0].map(h => h.trim().toLowerCase().replace(/[_-]+/g, ' '));
             const col = {};
@@ -578,9 +720,7 @@
                 col[key] = header.findIndex(h => names.includes(h));
             }
             if (col.text < 0) {
-                $('message').classList.remove('hidden');
-                return showMessage(`<p class="font-semibold text-red-600">Couldn't find a comment text column.</p>
-                    <p class="text-xs mt-2">Columns found: ${esc(rows[0].join(', '))}. Rename the comment column to "Content" and try again.</p>`, '');
+                return Progress.fail(`Couldn't find a comment text column. Columns found: ${rows[0].join(', ')}. Rename the comment column to "Content" and try again.`);
             }
             const cell = (r, key) => (col[key] >= 0 ? String(r[col[key]] ?? '').trim() : '');
             const comments = rows.slice(1).map(r => ({
@@ -592,15 +732,14 @@
             })).filter(c => c.text);
 
             if (!comments.length) {
-                $('message').classList.remove('hidden');
-                return showMessage('<p class="font-semibold text-red-600">No comment text found in that CSV.</p>', '');
+                return Progress.fail('No comment text found in that CSV.');
             }
             if (comments.length > MAX_TEXT_COMMENTS) {
                 comments.length = MAX_TEXT_COMMENTS;
             }
             analyseComments({ comments, label: file.name });
         };
-        reader.onerror = () => showMessage('<p class="font-semibold text-red-600">Could not read that file.</p>', '');
+        reader.onerror = () => Progress.fail('Could not read that file.');
         reader.readAsText(file);
     }
 
@@ -616,13 +755,20 @@
         sourceLabel = '';
         analysisTime = new Date();
         btn.disabled = true;
-        $('results').classList.add('hidden');
+        const n = selectedFiles.length;
+        Progress.start({
+            title: `Reading ${n} screenshot${n === 1 ? '' : 's'}`,
+            subtitle: 'The AI reads every comment in the images, then analyses them.',
+            stages: ['Preparing the images', 'Reading the comments in the screenshots', 'Scoring sentiment and writing the summary', 'Building your dashboard'],
+            estimateMs: 12000 + n * 8000,
+            schedule: []
+        });
 
         try {
             const images = [];
             for (let i = 0; i < selectedFiles.length; i++) {
                 btn.textContent = `Preparing ${i + 1}/${selectedFiles.length}`;
-                showMessage(`<p class="font-semibold text-indigo-500 animate-pulse">Preparing image ${i + 1} of ${selectedFiles.length}…</p>`);
+                Progress.update({ subtitle: `Preparing image ${i + 1} of ${n}…` });
                 images.push(await downscale(selectedFiles[i]));
             }
 
@@ -631,7 +777,9 @@
             }
 
             btn.textContent = 'Reading…';
-            showMessage('<p class="font-semibold text-indigo-500 animate-pulse">Reading screenshots — this takes a few seconds…</p>');
+            Progress.stage(1);
+            Progress.update({ subtitle: 'The AI reads every comment in the images, then analyses them.' });
+            const later = setTimeout(() => Progress.stage(2), 6000 + n * 5000);
 
             const response = await fetch('/api/process', {
                 method: 'POST',
@@ -641,15 +789,17 @@
             const result = await response.json().catch(() => ({ error: `Server returned ${response.status}` }));
             if (!response.ok || result.error) throw new Error(result.error || `Server returned ${response.status}`);
 
+            clearTimeout(later);
             currentData = Array.isArray(result.comments) ? result.comments : [];
             if (!currentData.length) {
-                showMessage('<p class="italic">No comments found in these screenshots. Check that the comments section was expanded before capturing.</p>');
+                Progress.fail('No comments found in these screenshots. Check that the comments section was expanded before capturing.');
                 return;
             }
+            Progress.done(`${num(currentData.length)} comment${currentData.length === 1 ? '' : 's'}`);
             render(result);
 
         } catch (err) {
-            showMessage(`<p class="font-semibold text-red-600">${esc(err.message)}</p>`, '');
+            Progress.fail(err.message);
         } finally {
             btn.disabled = false;
             btn.textContent = 'Analyze';
@@ -659,6 +809,7 @@
     function render(result) {
         $('message').classList.add('hidden');
         $('results').classList.remove('hidden');
+        $('guide').classList.remove('hidden');
         $('guide').open = false;
         $('dropzone').classList.add('hidden');
 
