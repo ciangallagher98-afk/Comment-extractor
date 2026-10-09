@@ -471,7 +471,7 @@ async function labelChunk(postText, chunk) {
     const lines = chunk.map((c, i) => `${i + 1}. ${oneLine(c.text, 500) || "(no text)"}`).join("\n");
     const prompt = `Label each numbered social media comment.
 Each label starts with ONE sentiment letter: P = positive, N = negative, U = neutral.
-Judge each comment on its own text, reading sarcasm by its intended meaning. Plain questions, tags of other users, and factual statements are U.
+Judge each comment on its own text, reading sarcasm by its intended meaning. Plain questions, tags of other users, and factual statements are U: a question is only P or N when it also clearly expresses a feeling ("Do they come in wide fit?" is UQ; "Why is this so overpriced?" is NQ).
 Then add ONE flag letter only if it applies:
   Q = a genuine question the account that posted could or should answer (about the product, service, availability, price, how-to, etc.). Rhetorical questions and questions to other commenters are NOT Q.
   C = a complaint about the account, its product, service or behaviour that it may want to respond to. General negativity or insults with no specific grievance are NOT C.
@@ -583,15 +583,20 @@ function countMentions(comments, entities) {
         const spellings = [...new Set([name, ...(Array.isArray(e?.match) ? e.match : [])]
             .map(s => oneLine(s, 60).toLowerCase()).filter(s => s.length >= 2))];
         if (!name || !spellings.length) return null;
-        const re = new RegExp(`(?<![\\p{L}\\p{N}])(?:${spellings.map(escapeRegex).join("|")})(?![\\p{L}\\p{N}])`, "iu");
+        // A plural or possessive counts too: "Air Max 90s", "Nike's".
+        const re = new RegExp(`(?<![\\p{L}\\p{N}])(?:${spellings.map(escapeRegex).join("|")})(?:['’]?s)?(?![\\p{L}\\p{N}])`, "iu");
         const type = String(e?.type || "").toLowerCase();
         return { name, type: TYPES.includes(type) ? type : "other", comments: countWhere(t => re.test(t)) };
     }).filter(e => e && e.comments > 0).sort((a, b) => b.comments - a.comments);
 
+    // "order #A1234" or "ticket #5521" is a reference number, not a hashtag.
+    const isReference = (t, index) => /(?:order|ref|reference|ticket|case|invoice|no|number|item)\.?\s*$/i.test(t.slice(Math.max(0, index - 12), index));
     const tally = re => {
         const counts = new Map();
         for (const t of texts) {
-            const seen = new Set((t.match(re) || []).map(x => x.toLowerCase()));
+            const seen = new Set([...t.matchAll(re)]
+                .filter(m => !(m[0].startsWith("#") && (isReference(t, m.index) || /^#\d+$/.test(m[0]))))
+                .map(m => m[0].toLowerCase()));
             for (const tag of seen) counts.set(tag, (counts.get(tag) || 0) + 1);
         }
         return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10)
