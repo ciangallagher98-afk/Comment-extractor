@@ -7,9 +7,10 @@ and reply threads.
 
 ## Install (2 minutes, no coding)
 
-1. Download this `extension` folder and unzip it somewhere you'll keep it
-   (e.g. `Documents/comment-extractor-extension`). Chrome loads it from there,
-   so don't delete it afterwards.
+1. On the [Comment Extractor](https://comment-extractor-nine.vercel.app/) website,
+   click **Get the Chrome extension** and download it. Unzip it and keep the
+   `comment-extractor-extension` folder somewhere permanent (e.g. Documents).
+   Chrome loads it from there, so don't delete it afterwards.
 2. In Chrome, go to `chrome://extensions`.
 3. Turn on **Developer mode** (switch in the top-right corner).
 4. Click **Load unpacked** and choose the folder from step 1 (the one that
@@ -54,8 +55,14 @@ Press **Stop & send** at any time to send what's been collected so far.
 
 ## Updating
 
-Replace the folder's files with the new version, then go to `chrome://extensions`
-and click the circular **reload** arrow on the Comment Extractor card.
+The website's header shows **Extension update available** when a newer version
+is out. Download it from the same button, replace the folder's files with the
+new version, then go to `chrome://extensions` and click the circular **reload**
+arrow on the Comment Extractor card.
+
+**For whoever maintains it:** after changing anything here, bump `version` in
+`manifest.json`, run `scripts/build-extension.sh`, and commit the files it
+writes to `downloads/`. That's what the website's download button serves.
 
 ## Files
 

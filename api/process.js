@@ -212,7 +212,9 @@ function normalise(parsed) {
             likes: parseLikes(c?.likes),
             timestamp: String(c?.timestamp ?? ""),
             sentiment: sentiment || "Neutral",
-            isReply: Boolean(c?.isReply)
+            isReply: Boolean(c?.isReply),
+            // "question" or "complaint" when the comment needs a reply; text mode only.
+            flag: c?.flag === "question" || c?.flag === "complaint" ? c.flag : null
         };
     });
 
@@ -467,14 +469,18 @@ const oneLine = (s, max) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0,
 
 async function labelChunk(postText, chunk) {
     const lines = chunk.map((c, i) => `${i + 1}. ${oneLine(c.text, 500) || "(no text)"}`).join("\n");
-    const prompt = `Classify the sentiment of each numbered social media comment.
-Use exactly one letter per comment: P = positive, N = negative, U = neutral.
+    const prompt = `Label each numbered social media comment.
+Each label starts with ONE sentiment letter: P = positive, N = negative, U = neutral.
 Judge each comment on its own text, reading sarcasm by its intended meaning. Plain questions, tags of other users, and factual statements are U.
+Then add ONE flag letter only if it applies:
+  Q = a genuine question the account that posted could or should answer (about the product, service, availability, price, how-to, etc.). Rhetorical questions and questions to other commenters are NOT Q.
+  C = a complaint about the account, its product, service or behaviour that it may want to respond to. General negativity or insults with no specific grievance are NOT C.
+Examples: "P", "N", "U", "UQ", "NC", "NQ".
 ${postText ? `For context, the post being commented on says: "${oneLine(postText, 300)}"\n` : ""}
 Comments:
 ${lines}
 
-Return ONLY a JSON object with exactly ${chunk.length} labels, in the same order: {"labels":["P","U","N"]}`;
+Return ONLY a JSON object with exactly ${chunk.length} labels, in the same order: {"labels":["P","UQ","NC","U"]}`;
 
     try {
         const completion = await callWithLadder({
@@ -486,15 +492,19 @@ Return ONLY a JSON object with exactly ${chunk.length} labels, in the same order
         const { value } = parseJSON(completion.choices?.[0]?.message?.content);
         const labels = Array.isArray(value?.labels) ? value.labels : [];
         const complete = labels.length === chunk.length;
+        const label = i => String(labels[i] ?? "").trim().toUpperCase();
         return {
             complete,
-            sentiments: chunk.map((_, i) =>
-                LABEL_TO_SENTIMENT[String(labels[i] ?? "").trim().toUpperCase().charAt(0)] || "Neutral")
+            sentiments: chunk.map((_, i) => LABEL_TO_SENTIMENT[label(i).charAt(0)] || "Neutral"),
+            flags: chunk.map((_, i) => {
+                const rest = label(i).slice(1);
+                return rest.includes("Q") ? "question" : rest.includes("C") ? "complaint" : null;
+            })
         };
     } catch {
         // One failed chunk should not lose the whole run: those comments stay
         // Neutral and the response is flagged so the page can say so.
-        return { complete: false, sentiments: chunk.map(() => "Neutral") };
+        return { complete: false, sentiments: chunk.map(() => "Neutral"), flags: chunk.map(() => null) };
     }
 }
 
@@ -527,17 +537,84 @@ Return ONLY a JSON object:
 {
   "summary": "2-3 sentences on what the conversation is actually about, including any dominant themes or disagreements.",
   "themes": [{ "label": "2-4 words", "mentions": 0, "sentiment": "Positive|Negative|Neutral" }],
-  "standout": [{ "n": 0, "why": "short phrase, e.g. most liked, sharpest criticism" }]
+  "standout": [{ "n": 0, "why": "short phrase, e.g. most liked, sharpest criticism" }],
+  "entities": [{ "name": "Nike", "type": "brand|product|person|organisation|place|event", "match": ["nike", "nikes"] }],
+  "brief": {
+    "headline": "One sentence a client would read first: the single most important finding.",
+    "takeaways": ["3 to 5 short, specific findings, each grounded in what commenters actually said"],
+    "actions": ["2 to 4 concrete recommended next steps for the account that posted"]
+  }
 }
-Rules: "themes" is 3 to 6 recurring topics people are TALKING ABOUT (not how they feel), with "mentions" = how many of the comments above touch it and "sentiment" = the dominant sentiment of those comments, ordered by mentions. "standout" is up to 3 comments that best represent the conversation, referenced by their # number.`;
+Rules: "themes" is 3 to 6 recurring topics people are TALKING ABOUT (not how they feel), with "mentions" = how many of the comments above touch it and "sentiment" = the dominant sentiment of those comments, ordered by mentions. "standout" is up to 3 comments that best represent the conversation, referenced by their # number. "entities" is up to 12 specific named brands, products, people, organisations, places or events that commenters mention (not generic words, not the commenters themselves); "match" lists the lowercase spellings to search for, including common misspellings, nicknames and plurals. The brief is written for a client: plain English, no jargon, no hedging, and it must not invent facts beyond the comments and post.`;
 
     const completion = await callWithLadder({
         model: MODEL,
         temperature: 0.2,
-        max_tokens: 3000,
+        max_tokens: 5000,
         messages: [{ role: "user", content: prompt }]
     }, 40_000);
     return parseJSON(completion.choices?.[0]?.message?.content).value;
+}
+
+// ── Extra analysis, all counted from the real comments ──────────────────
+const asList = (v, max) => (Array.isArray(v) ? v : []).map(x => oneLine(x, 400)).filter(Boolean).slice(0, max);
+
+function cleanBrief(brief) {
+    if (!brief || typeof brief !== "object") return null;
+    const out = {
+        headline: oneLine(brief.headline, 400),
+        takeaways: asList(brief.takeaways, 5),
+        actions: asList(brief.actions, 4)
+    };
+    return out.headline || out.takeaways.length ? out : null;
+}
+
+const escapeRegex = s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+// The model names the entities; how many comments mention each is counted
+// here, across every comment, so the numbers are exact.
+function countMentions(comments, entities) {
+    const texts = comments.map(c => c.text).filter(t => t !== "[Image/GIF Only]");
+    const countWhere = test => texts.reduce((n, t) => n + (test(t) ? 1 : 0), 0);
+
+    const TYPES = ["brand", "product", "person", "organisation", "place", "event"];
+    const named = (Array.isArray(entities) ? entities : []).slice(0, 12).map(e => {
+        const name = oneLine(e?.name, 80);
+        const spellings = [...new Set([name, ...(Array.isArray(e?.match) ? e.match : [])]
+            .map(s => oneLine(s, 60).toLowerCase()).filter(s => s.length >= 2))];
+        if (!name || !spellings.length) return null;
+        const re = new RegExp(`(?<![\\p{L}\\p{N}])(?:${spellings.map(escapeRegex).join("|")})(?![\\p{L}\\p{N}])`, "iu");
+        const type = String(e?.type || "").toLowerCase();
+        return { name, type: TYPES.includes(type) ? type : "other", comments: countWhere(t => re.test(t)) };
+    }).filter(e => e && e.comments > 0).sort((a, b) => b.comments - a.comments);
+
+    const tally = re => {
+        const counts = new Map();
+        for (const t of texts) {
+            const seen = new Set((t.match(re) || []).map(x => x.toLowerCase()));
+            for (const tag of seen) counts.set(tag, (counts.get(tag) || 0) + 1);
+        }
+        return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10)
+            .map(([tag, n]) => ({ tag, comments: n }));
+    };
+
+    return {
+        entities: named,
+        hashtags: tally(/#[\p{L}\p{N}_]{2,}/gu),
+        handles: tally(/(?<![\w.])@[\w.]{2,30}/g)
+    };
+}
+
+function needsReply(comments) {
+    const flagged = comments.filter(c => c.flag);
+    return {
+        questions: flagged.filter(c => c.flag === "question").length,
+        complaints: flagged.filter(c => c.flag === "complaint").length,
+        items: flagged
+            .sort((a, b) => b.likes - a.likes)
+            .slice(0, 50)
+            .map(c => ({ author: c.author, text: c.text, likes: c.likes, timestamp: c.timestamp, type: c.flag }))
+    };
 }
 
 async function analyseCommentText(body) {
@@ -564,9 +641,12 @@ async function analyseCommentText(body) {
     const labelled = await runLimited(
         chunks.map(chunk => () => labelChunk(post?.text, chunk.map(x => x.c))), MAX_CONCURRENT);
 
-    comments.forEach(c => { c.sentiment = "Neutral"; });
+    comments.forEach(c => { c.sentiment = "Neutral"; c.flag = null; });
     labelled.forEach((result, k) => {
-        chunks[k].forEach((x, j) => { comments[x.i].sentiment = result.sentiments[j]; });
+        chunks[k].forEach((x, j) => {
+            comments[x.i].sentiment = result.sentiments[j];
+            comments[x.i].flag = result.flags[j];
+        });
     });
     const sentimentIncomplete = labelled.some(r => !r.complete);
 
@@ -597,12 +677,18 @@ async function analyseCommentText(body) {
         .filter(Boolean);
 
     const warnings = [];
+    const extras = {
+        brief: cleanBrief(insights?.brief),
+        mentions: countMentions(comments, insights?.entities),
+        needsReply: needsReply(comments)
+    };
     if (raw.length > MAX_TEXT_COMMENTS) warnings.push(`Only the first ${MAX_TEXT_COMMENTS.toLocaleString()} of ${raw.length.toLocaleString()} comments were analysed.`);
     if (sentimentIncomplete) warnings.push("Some comments could not be scored and are shown as Neutral. Running the analysis again usually fixes this.");
     if (insightsFailed) warnings.push("The summary and themes could not be generated this time. The table and sentiment are still complete.");
 
     return {
         ...normalise({ post, comments, summary: insights?.summary, themes, standout }),
+        ...extras,
         truncated: false,
         warnings
     };

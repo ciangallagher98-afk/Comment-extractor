@@ -18,6 +18,22 @@ sample (most-liked half plus an even spread), with theme mentions scaled back up
 to the full thread. Standout comments are referenced by number and filled from
 the real data, so they are always verbatim. Up to 2,000 comments per run.
 
+The same passes also produce:
+
+- **Needs a reply** — the sentiment pass flags every comment that is a genuine
+  question for the account (`Q`) or a specific complaint (`C`), so this covers
+  the whole thread, not a sample. Listed most-liked first, exportable as CSV.
+- **Mentions & topics** — the summary pass names the brands, products, people,
+  organisations, places and events discussed, with the spellings to look for;
+  how many comments mention each is then counted across every comment, so the
+  numbers are exact. Hashtags and tagged accounts are counted directly.
+- **Insight brief** — a headline, key takeaways and recommended actions,
+  written for a client, shown first and included in the PDF.
+
+The extension is downloadable from the site's **Get the Chrome extension**
+button, which serves `downloads/comment-extractor-extension.zip`. Rebuild it
+with `scripts/build-extension.sh` after changing `extension/`.
+
 Upload one or more screenshots; a vision model reads them directly, extracts each
 comment with its author, text, like count and timestamp, scores sentiment, and
 renders a summary, a share-of-voice chart and a CSV-exportable table.

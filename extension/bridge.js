@@ -18,10 +18,21 @@
         }
     }
 
+    // Lets the page show "Extension installed" or "Update available".
+    // Never allowed to stop the hand-off below.
+    function announce() {
+        try {
+            window.postMessage({ type: "CE_EXTENSION_PRESENT", version: chrome.runtime.getManifest().version }, location.origin);
+        } catch {
+            // version unknown; the page simply shows the install button
+        }
+    }
+
     // The page announces itself when it's ready; deliver then, and also right away
     // in case it was ready before this script started.
     window.addEventListener("message", event => {
-        if (event.source === window && event.data?.type === "CE_PAGE_READY") deliver();
+        if (event.source === window && event.data?.type === "CE_PAGE_READY") { announce(); deliver(); }
     });
+    announce();
     deliver();
 })();
