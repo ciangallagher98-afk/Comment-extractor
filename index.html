@@ -457,7 +457,7 @@
     // reaches 100% when the results actually arrive.
     const PAGE_TITLE = document.title;
     const Progress = (() => {
-        let stages = [], current = 0, started = 0, estimate = 0, timer = null, stageTimers = [];
+        let stages = [], current = 0, started = 0, estimate = 0, timer = null, stageTimers = [], hideTimer = null;
         const fmt = ms => { const s = Math.round(ms / 1000); return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`; };
         const icon = state => state === 'done'
             ? '<span class="w-5 h-5 rounded-full bg-emerald-500 text-white text-[11px] font-bold flex items-center justify-center">✓</span>'
@@ -485,7 +485,7 @@
                 ? '<span class="text-red-600 text-xl font-bold">!</span>'
                 : '<svg class="animate-spin w-6 h-6 text-indigo-600" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" class="opacity-20"></circle><path d="M22 12a10 10 0 0 0-10-10" stroke="currentColor" stroke-width="3" stroke-linecap="round"></path></svg>';
         }
-        function clearTimers() { clearInterval(timer); stageTimers.forEach(clearTimeout); stageTimers = []; }
+        function clearTimers() { clearInterval(timer); clearTimeout(hideTimer); stageTimers.forEach(clearTimeout); stageTimers = []; }
         return {
             // schedule: when each later stage should begin, as fractions of the estimate.
             start({ title, subtitle = '', stages: list, estimateMs = 15000, schedule = [] }) {
@@ -519,7 +519,8 @@
                 current = stages.length; drawStages();
                 $('progress-bar').style.width = '100%';
                 document.title = `✓ ${summary} · ${PAGE_TITLE}`;
-                setTimeout(() => $('progress').classList.add('hidden'), 600);
+                clearTimeout(hideTimer);
+                hideTimer = setTimeout(() => $('progress').classList.add('hidden'), 600);
             },
             fail(message, actionsHtml = '') {
                 clearTimers();
