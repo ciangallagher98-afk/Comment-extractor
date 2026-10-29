@@ -59,13 +59,16 @@ async function callOnce(payload, timeoutMs) {
 // Retries are bounded by a wall-clock deadline rather than a fixed count,
 // because the function itself is killed at maxDuration. A retry is only started
 // when enough of the budget remains for it to plausibly finish.
-async function callChat(payload, budgetMs = 50_000) {
+async function callChat(payload, budgetMs = 50_000, attemptMs = 45_000) {
     const deadline = Date.now() + budgetMs;
 
     for (let attempt = 1; ; attempt++) {
         const remaining = deadline - Date.now();
         try {
-            return await callOnce(payload, Math.min(remaining, 45_000));
+            // Capping the attempt below the budget is what leaves room to retry:
+            // an attempt allowed to run the whole budget makes a late 429
+            // unretryable, because no time is left when it finally fails.
+            return await callOnce(payload, Math.min(remaining, attemptMs));
         } catch (error) {
             const backoff = 800 * attempt;
             const canRetry = RETRIABLE.has(error?.status)
@@ -440,10 +443,10 @@ const OPTION_LADDER = [
     {}
 ];
 
-async function callWithLadder(request, budgetMs) {
+async function callWithLadder(request, budgetMs, attemptMs) {
     for (let i = 0; i < OPTION_LADDER.length; i++) {
         try {
-            return await callChat({ ...request, ...OPTION_LADDER[i] }, budgetMs);
+            return await callChat({ ...request, ...OPTION_LADDER[i] }, budgetMs, attemptMs);
         } catch (err) {
             const isLast = i === OPTION_LADDER.length - 1;
             if (err?.status !== 400 || isLast) throw err;
@@ -488,23 +491,42 @@ Return ONLY a JSON object with exactly ${chunk.length} labels, in the same order
             temperature: 0,
             max_tokens: 4000,
             messages: [{ role: "user", content: prompt }]
-        }, 30_000);
+        }, 30_000, 12_000);
         const { value } = parseJSON(completion.choices?.[0]?.message?.content);
         const labels = Array.isArray(value?.labels) ? value.labels : [];
-        const complete = labels.length === chunk.length;
         const label = i => String(labels[i] ?? "").trim().toUpperCase();
+
+        // A right-sized list of labels that do not start with P, N or U maps to
+        // Neutral for every comment. Counting the ones that actually resolve is
+        // what stops that reading as a successful run.
+        const unmapped = chunk.filter((_, i) => !LABEL_TO_SENTIMENT[label(i).charAt(0)]).length;
+        const complete = labels.length === chunk.length && unmapped === 0;
+
+        const reason = labels.length !== chunk.length
+            ? `returned ${labels.length} labels for ${chunk.length} comments`
+            : unmapped
+                ? `${unmapped} of ${chunk.length} labels were not P, N or U`
+                : null;
         return {
             complete,
+            reason,
             sentiments: chunk.map((_, i) => LABEL_TO_SENTIMENT[label(i).charAt(0)] || "Neutral"),
             flags: chunk.map((_, i) => {
                 const rest = label(i).slice(1);
                 return rest.includes("Q") ? "question" : rest.includes("C") ? "complaint" : null;
             })
         };
-    } catch {
+    } catch (error) {
         // One failed chunk should not lose the whole run: those comments stay
-        // Neutral and the response is flagged so the page can say so.
-        return { complete: false, sentiments: chunk.map(() => "Neutral"), flags: chunk.map(() => null) };
+        // Neutral. Keep why it failed — a rate limit, a timeout and a malformed
+        // reply all look identical once the error is swallowed, and the warning
+        // on the page is the only place anyone will see it.
+        const status = error?.status ? `HTTP ${error.status}` : null;
+        const timedOut = error?.name === 'TimeoutError' || /timeout/i.test(error?.message || '');
+        const reason = timedOut ? 'timed out'
+            : [status, error?.message].filter(Boolean).join(': ').slice(0, 120) || 'unknown error';
+
+        return { complete: false, reason, sentiments: chunk.map(() => "Neutral"), flags: chunk.map(() => null) };
     }
 }
 
@@ -688,7 +710,15 @@ async function analyseCommentText(body) {
         needsReply: needsReply(comments)
     };
     if (raw.length > MAX_TEXT_COMMENTS) warnings.push(`Only the first ${MAX_TEXT_COMMENTS.toLocaleString()} of ${raw.length.toLocaleString()} comments were analysed.`);
-    if (sentimentIncomplete) warnings.push("Some comments could not be scored and are shown as Neutral. Running the analysis again usually fixes this.");
+    if (sentimentIncomplete) {
+        const failed = labelled.filter(r => !r.complete);
+        const reasons = [...new Set(failed.map(r => r.reason).filter(Boolean))];
+        warnings.push(
+            `${failed.length} of ${labelled.length} comment batches could not be scored and are shown as Neutral`
+            + (reasons.length ? ` (${reasons.join('; ')})` : '')
+            + '. Running the analysis again usually fixes this.'
+        );
+    }
     if (insightsFailed) warnings.push("The summary and themes could not be generated this time. The table and sentiment are still complete.");
 
     return {
